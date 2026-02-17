@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:6
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: ./backend
+    restart: always
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/stockai
+      - NEWS_SCRAPE_ENABLED=false
+      - FINBERT_ENABLED=false
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_BASE=http://localhost:5000
+    restart: always
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:

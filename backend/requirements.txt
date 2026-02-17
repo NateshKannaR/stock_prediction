@@ -1,0 +1,13 @@
+flask
+flask-cors
+pymongo
+pandas
+numpy
+yfinance
+requests
+beautifulsoup4
+feedparser
+scikit-learn
+xgboost
+torch
+transformers
