@@ -4,6 +4,7 @@ import { PropsWithChildren } from "react";
 const navigation = [
   ["Dashboard", "/dashboard"],
   ["Live Market", "/live-market"],
+  ["Intraday Trading", "/intraday"],
   ["Live News", "/live-news"],
   ["AI Predictions", "/ai-predictions"],
   ["Auto Trading", "/auto-trading"],

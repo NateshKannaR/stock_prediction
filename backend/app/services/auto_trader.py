@@ -153,20 +153,24 @@ def _trade_signal(quote: dict, candles: list[dict]) -> str | None:
         return None
 
 
-async def _fetch_candles_for_scoring(upstox: UpstoxService, credential: Any, instrument_key: str) -> list[dict]:
+async def _fetch_candles_for_scoring(upstox: UpstoxService, credential: Any, instrument_key: str, interval: str = "day") -> list[dict]:
     """Fetch stored candles or load from Upstox for scoring."""
     from app.services.market_data import MarketDataService
     db = _db()
     svc = MarketDataService(db)
-    candles = await svc.recent_candles(instrument_key, "day", limit=60)
+    candles = await svc.recent_candles(instrument_key, interval, limit=60)
     if len(candles) < 30:
         try:
             today = datetime.now(timezone.utc).date().isoformat()
-            from_date = datetime.now(timezone.utc).replace(year=datetime.now().year - 1).date().isoformat()
-            data = await upstox.get_historical_candles(credential.access_token, instrument_key, "day", today, from_date)
+            if interval == "day":
+                from_date = datetime.now(timezone.utc).replace(year=datetime.now().year - 1).date().isoformat()
+            else:
+                # For intraday, only fetch today's data
+                from_date = today
+            data = await upstox.get_historical_candles(credential.access_token, instrument_key, interval, today, from_date)
             rows = data.get("data", {}).get("candles", [])
-            await svc.persist_candles(instrument_key, "day", rows)
-            candles = await svc.recent_candles(instrument_key, "day", limit=60)
+            await svc.persist_candles(instrument_key, interval, rows)
+            candles = await svc.recent_candles(instrument_key, interval, limit=60)
         except Exception as e:
             logger.warning("Could not load candles for %s: %s", instrument_key, e)
     return [
