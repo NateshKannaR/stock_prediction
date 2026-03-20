@@ -9,11 +9,83 @@
 body {
   background:
     radial-gradient(circle at top right, rgba(41, 211, 145, 0.08), transparent 25%),
+    radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.06), transparent 25%),
     linear-gradient(180deg, #050814 0%, #060816 42%, #091022 100%);
   color: #d7e3ff;
+  min-height: 100vh;
 }
 
 * {
   border-color: #1d2844;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0f1e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1d2844;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2a3654;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Glassmorphism effect */
+.glass {
+  background: rgba(13, 18, 33, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card hover effect */
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15);
+}
+
+/* Button glow */
+.btn-glow {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+  transition: all 0.3s ease;
+}
+
+.btn-glow:hover {
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.5);
 }
 
