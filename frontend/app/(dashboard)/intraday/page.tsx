@@ -3,16 +3,8 @@
 import { useEffect, useState } from "react";
 import { PageHeader, Panel } from "@/components/ui";
 import { api } from "@/lib/api";
+import { STOCKS } from "@/lib/stocks";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-
-const STOCKS = [
-  { key: "NSE_EQ|INE002A01018", name: "RELIANCE" },
-  { key: "NSE_EQ|INE467B01029", name: "TCS" },
-  { key: "NSE_EQ|INE040A01034", name: "HDFCBANK" },
-  { key: "NSE_EQ|INE009A01021", name: "INFY" },
-  { key: "NSE_EQ|INE090A01021", name: "ICICIBANK" },
-  { key: "NSE_EQ|INE062A01020", name: "SBIN" },
-];
 
 const TIMEFRAMES = [
   { value: "1minute", label: "1 Min" },
