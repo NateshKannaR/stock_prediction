@@ -50,6 +50,7 @@ export const api = {
   positions: () => apiFetch<Array<{ instrument_key: string; net_quantity: number; average_price: number; last_trade_price: number }>>("/portfolio/positions"),
   tradeHistory: () => apiFetch<Array<{ id: number; strategy_name: string; instrument_key: string; side: string; quantity: number; price: number; status: string; created_at: string }>>("/trades/history"),
   strategies: () => apiFetch<Array<Record<string, unknown>>>("/strategies"),
+  listStrategies: () => apiFetch<Array<{ id: string; name: string; instruments: string[]; indicators: any; entry_rules: any; exit_rules: any; risk_params: any; is_active: boolean }>>("/strategies"),
   autoTradingStatus: () => apiFetch<{ enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number; today_trades: number; today_pnl: number; loop: { running: boolean; last_cycle: string | null; last_error: string | null; cycles: number } }>("/trading/auto-trading/status"),
   marketQuotes: (instrumentKeys: string[]) =>
     apiFetch<{ status?: string; data?: Record<string, MarketQuoteRow> }>("/market/quotes", {
@@ -80,6 +81,6 @@ export const api = {
   toggleAutoTrading: (payload: { enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number }) =>
     apiFetch<Record<string, unknown>>("/trading/auto-trading/toggle", { method: "POST", body: JSON.stringify(payload) }),
   createStrategy: (payload: Record<string, unknown>) =>
-    apiFetch<Record<string, unknown>>("/strategies", { method: "POST", body: JSON.stringify(payload) }),
+    apiFetch<{ id: string }>("/strategies", { method: "POST", body: JSON.stringify(payload) }),
   safe: apiFetchSafe,
 };
