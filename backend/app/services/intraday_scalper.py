@@ -145,6 +145,7 @@ async def _run_scalping_cycle(db, state: dict) -> None:
     daily_loss_limit = float(state.get("daily_loss_limit", 2000))
     paper_trading = bool(state.get("paper_trading", True))
     interval = state.get("scalping_interval", "1minute")  # 1minute, 5minute
+    target_stock = state.get("stock")  # Specific stock to trade
     
     upstox = UpstoxService(db)
     credential = await upstox.get_credential(user_id)
@@ -228,14 +229,17 @@ async def _run_scalping_cycle(db, state: dict) -> None:
     _status["active_position"] = None
     _log(f"Scanning for {interval} scalping opportunity...")
     
-    quotes_resp = await upstox.get_quotes(credential.access_token, WATCHLIST)
+    # If specific stock selected, only trade that stock
+    stocks_to_scan = [target_stock] if target_stock else WATCHLIST
+    
+    quotes_resp = await upstox.get_quotes(credential.access_token, stocks_to_scan)
     quotes: dict = quotes_resp.get("data") or {}
     
     best_stock = None
     best_signal = None
     best_price = 0
     
-    for instrument_key in WATCHLIST:
+    for instrument_key in stocks_to_scan:
         quote = quotes.get(instrument_key) or {}
         last_price = float(quote.get("last_price") or 0)
         if last_price == 0 or last_price > capital * 0.3:
