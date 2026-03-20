@@ -51,24 +51,15 @@ export default function IntradayPage() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  
-  const [scalpingEnabled, setScalpingEnabled] = useState(false);
-  const [scalpingInterval, setScalpingInterval] = useState("1minute");
-  const [scalpingStatus, setScalpingStatus] = useState<any>(null);
-  const [scalpingCapital, setScalpingCapital] = useState(50000);
-  const [scalpingStock, setScalpingStock] = useState(STOCKS[0].key);
-  const [showConfig, setShowConfig] = useState(false);
 
   useEffect(() => {
     loadData();
-    loadScalpingStatus();
   }, [selectedStock, selectedTimeframe]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       loadData();
-      loadScalpingStatus();
     }, 5000);
     return () => clearInterval(interval);
   }, [autoRefresh, selectedStock, selectedTimeframe]);
@@ -92,47 +83,6 @@ export default function IntradayPage() {
       console.error("Failed to load intraday data:", e);
     }
     setLoading(false);
-  }
-
-  async function loadScalpingStatus() {
-    try {
-      const res = await fetch('http://localhost:8000/api/v1/trading/scalping/status');
-      const data = await res.json();
-      setScalpingStatus(data);
-      setScalpingEnabled(data.enabled);
-      setScalpingInterval(data.interval);
-    } catch (e) {
-      console.error("Failed to load scalping status:", e);
-    }
-  }
-
-  async function toggleScalpingBot() {
-    if (!scalpingEnabled && scalpingCapital < 1000) {
-      alert('⚠️ Capital must be at least ₹1,000');
-      return;
-    }
-    
-    try {
-      const res = await fetch('http://localhost:8000/api/v1/trading/scalping/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: !scalpingEnabled,
-          interval: scalpingInterval,
-          stock: scalpingStock,
-          paper_trading: true,
-          daily_loss_limit: scalpingCapital * 0.05, // 5% of capital
-          max_capital_allocation: scalpingCapital,
-        }),
-      });
-      const data = await res.json();
-      setScalpingEnabled(data.enabled);
-      await loadScalpingStatus();
-      alert(data.enabled ? '✓ Scalping bot started!' : '✓ Scalping bot stopped!');
-      setShowConfig(false);
-    } catch (e: any) {
-      alert('✗ Failed: ' + (e.message || e));
-    }
   }
 
   async function loadHistoricalIntraday() {
@@ -182,136 +132,8 @@ export default function IntradayPage() {
     <div className="animate-fadeIn">
       <PageHeader 
         title="Intraday Trading" 
-        subtitle="Real-time scalping bot with 1-minute auto-trading" 
+        subtitle="Real-time intraday charts with multiple timeframes for day trading" 
       />
-
-      {/* Scalping Bot Panel */}
-      <Panel className="mb-6 border-accent/30 bg-accent/5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">⚡ Intraday Scalping Bot</h3>
-          <button
-            onClick={() => setShowConfig(!showConfig)}
-            className="text-sm text-accent hover:underline"
-          >
-            {showConfig ? '▲ Hide Config' : '▼ Configure'}
-          </button>
-        </div>
-        
-        {showConfig && (
-          <div className="mb-4 p-4 rounded-xl border border-border bg-panel">
-            <h4 className="text-sm font-semibold mb-3">Bot Configuration</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs text-muted mb-2">Select Stock to Trade</label>
-                <select
-                  value={scalpingStock}
-                  onChange={(e) => setScalpingStock(e.target.value)}
-                  disabled={scalpingEnabled}
-                  className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
-                >
-                  {STOCKS.map((stock) => (
-                    <option key={stock.key} value={stock.key}>
-                      {stock.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-2">Trading Capital (₹)</label>
-                <input
-                  type="number"
-                  value={scalpingCapital}
-                  onChange={(e) => setScalpingCapital(Number(e.target.value))}
-                  disabled={scalpingEnabled}
-                  min="1000"
-                  step="1000"
-                  className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
-                />
-                <p className="text-xs text-muted mt-1">Min: ₹1,000</p>
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-2">Timeframe</label>
-                <select
-                  value={scalpingInterval}
-                  onChange={(e) => setScalpingInterval(e.target.value)}
-                  disabled={scalpingEnabled}
-                  className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
-                >
-                  <option value="1minute">1 Minute (Ultra Fast)</option>
-                  <option value="5minute">5 Minutes (Fast)</option>
-                </select>
-              </div>
-            </div>
-            <div className="mt-3 p-3 rounded-lg bg-yellow-400/10 border border-yellow-400/30">
-              <p className="text-xs text-yellow-400">
-                ⚠️ <strong>Risk Settings:</strong> Daily loss limit: ₹{(scalpingCapital * 0.05).toFixed(0)} (5% of capital) | 
-                Max per trade: ₹{(scalpingCapital * 0.2).toFixed(0)} (20% of capital)
-              </p>
-            </div>
-          </div>
-        )}
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div>
-            <label className="block text-sm text-muted mb-2">Bot Status</label>
-            <div className="flex items-center gap-2">
-              <span className={`h-3 w-3 rounded-full ${scalpingEnabled ? 'bg-accent animate-pulse' : 'bg-border'}`} />
-              <span className="text-sm font-medium">{scalpingEnabled ? 'Running' : 'Stopped'}</span>
-            </div>
-            {scalpingEnabled && (
-              <p className="text-xs text-muted mt-1">Trading: {STOCKS.find(s => s.key === scalpingStock)?.name}</p>
-            )}
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-2">Capital Allocated</label>
-            <p className="text-lg font-bold">₹{scalpingCapital.toLocaleString('en-IN')}</p>
-            <p className="text-xs text-muted">Paper Trading Mode</p>
-          </div>
-          <div className="flex items-end">
-            <button
-              onClick={toggleScalpingBot}
-              className={`w-full rounded-xl px-6 py-3 font-semibold transition ${
-                scalpingEnabled
-                  ? 'bg-danger text-white hover:bg-danger/90'
-                  : 'bg-accent text-black hover:bg-accent/90'
-              }`}
-            >
-              {scalpingEnabled ? '⏸️ Stop Bot' : '▶️ Start Bot'}
-            </button>
-          </div>
-        </div>
-        
-        {scalpingStatus && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Today's Trades</p>
-              <p className="text-lg font-bold">{scalpingStatus.today_trades || 0}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Today's P&L</p>
-              <p className={`text-lg font-bold ${(scalpingStatus.today_pnl || 0) >= 0 ? 'text-accent' : 'text-danger'}`}>
-                ₹{(scalpingStatus.today_pnl || 0).toFixed(2)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Cycles</p>
-              <p className="text-lg font-bold">{scalpingStatus.loop?.cycles || 0}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Active Position</p>
-              <p className="text-lg font-bold">{scalpingStatus.loop?.active_position ? 'Yes' : 'No'}</p>
-            </div>
-          </div>
-        )}
-        
-        <div className="p-3 rounded-lg bg-border/30">
-          <p className="text-xs text-muted">
-            <strong>⚠️ How it works:</strong> Bot will trade <strong>{STOCKS.find(s => s.key === scalpingStock)?.name}</strong> using <strong>₹{scalpingCapital.toLocaleString('en-IN')}</strong> capital. 
-            It scans every 10 seconds for signals. When found, it BUYS/SELLS using 20% of capital per trade. 
-            After {scalpingInterval === '1minute' ? '1 minute' : '5 minutes'}, it automatically EXITS. Stops if daily loss exceeds 5% (₹{(scalpingCapital * 0.05).toFixed(0)}).
-          </p>
-        </div>
-      </Panel>
 
       {/* Chart Controls */}
       <Panel className="mb-6">
@@ -437,6 +259,35 @@ export default function IntradayPage() {
           </div>
         </Panel>
       )}
+
+      {/* Volume Chart */}
+      {candles.length > 0 && (
+        <Panel className="mb-6">
+          <h3 className="text-lg font-semibold mb-4">Volume Analysis</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="time" stroke="#888" style={{ fontSize: '12px' }} />
+              <YAxis stroke="#888" style={{ fontSize: '12px' }} />
+              <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px' }} />
+              <Line type="monotone" dataKey="volume" stroke="#3b82f6" strokeWidth={2} dot={false} name="Volume" />
+            </LineChart>
+          </ResponsiveContainer>
+        </Panel>
+      )}
+
+      {/* Trading Tips */}
+      <Panel className="border-yellow-400/30 bg-yellow-400/5">
+        <h3 className="text-lg font-semibold mb-3 text-yellow-400">💡 Intraday Trading Tips</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-muted">
+          <div>• Best time: 9:30 AM - 11:00 AM (high volatility)</div>
+          <div>• Avoid: 12:00 PM - 1:00 PM (low liquidity)</div>
+          <div>• Use stop-loss on every trade</div>
+          <div>• Don't hold positions overnight</div>
+          <div>• Follow the trend, don't fight it</div>
+          <div>• Book profits at resistance levels</div>
+        </div>
+      </Panel>
     </div>
   );
 }
