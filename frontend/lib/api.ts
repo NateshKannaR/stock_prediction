@@ -82,5 +82,9 @@ export const api = {
     apiFetch<Record<string, unknown>>("/trading/auto-trading/toggle", { method: "POST", body: JSON.stringify(payload) }),
   createStrategy: (payload: Record<string, unknown>) =>
     apiFetch<{ id: string }>("/strategies", { method: "POST", body: JSON.stringify(payload) }),
+  scanStocks: (payload: { interval?: string; top_n?: number; min_candles?: number }) =>
+    apiFetch<{ top_stocks: Array<{ symbol: string; intraday_score: number; volatility: number; volume_surge: number; trend_strength: number; ml_confidence: number; ml_signal: string; liquidity: number; momentum: number; sector: string }>; scanned_at: string; interval: string; total_scanned: number }>("/scanner/scan", { method: "POST", body: JSON.stringify(payload) }),
+  latestScan: (limit = 10) =>
+    apiFetch<{ results: Array<{ symbol: string; intraday_score: number; volatility: number; volume_surge: number; trend_strength: number; ml_confidence: number; ml_signal: string; liquidity: number; momentum: number; sector: string; scan_time: string }> }>(`/scanner/latest?limit=${limit}`),
   safe: apiFetchSafe,
 };

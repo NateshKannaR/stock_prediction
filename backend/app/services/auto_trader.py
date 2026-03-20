@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.db.session import get_client
 from app.services.alerts import AlertService
 from app.services.indicators import add_technical_indicators
+from app.services.stock_scanner import StockScannerService
 from app.services.upstox import UpstoxService
 
 logger = logging.getLogger(__name__)
@@ -27,28 +28,9 @@ _status: dict = {
     "log": [],                 # last 20 log lines shown in UI
 }
 
-WATCHLIST = [
-    "NSE_EQ|INE002A01018",  # RELIANCE
-    "NSE_EQ|INE467B01029",  # TCS
-    "NSE_EQ|INE040A01034",  # HDFCBANK
-    "NSE_EQ|INE009A01021",  # INFY
-    "NSE_EQ|INE090A01021",  # ICICIBANK
-    "NSE_EQ|INE062A01020",  # SBIN
-    "NSE_EQ|INE397D01024",  # BHARTIARTL
-    "NSE_EQ|INE154A01025",  # ITC
-    "NSE_EQ|INE018A01030",  # LT
-    "NSE_EQ|INE030A01027",  # HINDUNILVR
-    "NSE_EQ|INE155A01022",  # TATAMOTORS
-    "NSE_EQ|INE192A01025",  # TATAPOWER
-    "NSE_EQ|INE081A01020",  # TATACHEM
-    "NSE_EQ|INE245A01021",  # TATACOMM
-    "NSE_EQ|INE769A01020",  # TATACOFFEE
-    "NSE_EQ|INE669E01016",  # TATAMTRDVR
-    "NSE_EQ|INE123W01016",  # TATACONSUMER
-    "NSE_EQ|INE685A01028",  # TATAELXSI
-    "NSE_EQ|INE470A01017",  # TATAINVEST
-    "NSE_EQ|INE721A01013",  # TATASTEEL
-]
+from app.models.watchlist import INTRADAY_UNIVERSE
+
+WATCHLIST = INTRADAY_UNIVERSE  # Fallback watchlist
 
 LABEL = {
     "NSE_EQ|INE002A01018": "RELIANCE",
@@ -62,15 +44,15 @@ LABEL = {
     "NSE_EQ|INE018A01030": "LT",
     "NSE_EQ|INE030A01027": "HINDUNILVR",
     "NSE_EQ|INE155A01022": "TATAMOTORS",
-    "NSE_EQ|INE192A01025": "TATAPOWER",
-    "NSE_EQ|INE081A01020": "TATACHEM",
-    "NSE_EQ|INE245A01021": "TATACOMM",
-    "NSE_EQ|INE769A01020": "TATACOFFEE",
-    "NSE_EQ|INE669E01016": "TATAMTRDVR",
-    "NSE_EQ|INE123W01016": "TATACONSUMER",
-    "NSE_EQ|INE685A01028": "TATAELXSI",
-    "NSE_EQ|INE470A01017": "TATAINVEST",
     "NSE_EQ|INE721A01013": "TATASTEEL",
+    "NSE_EQ|INE019A01038": "AXISBANK",
+    "NSE_EQ|INE238A01034": "KOTAK",
+    "NSE_EQ|INE120A01034": "ASIANPAINT",
+    "NSE_EQ|INE752E01010": "ADANIENT",
+    "NSE_EQ|INE742F01042": "ADANIPORTS",
+    "NSE_EQ|INE066A01021": "MARUTI",
+    "NSE_EQ|INE101D01020": "MAHINDRA",
+    "NSE_EQ|INE239A01016": "WIPRO",
 }
 
 
@@ -299,9 +281,78 @@ async def _run_cycle(db, state: dict) -> None:
                     _log(f"Exit order failed for {label}: {exc}")
             return  # don't open new position while one is active
 
-    # --- No open position: find best stock and buy ---
+    # --- No open position: scan universe for best stocks ---
     _status["active_position"] = None
-    _log("Scanning stocks for best opportunity...")
+    _log("Scanning stock universe for best opportunities...")
+
+    # Use stock scanner to get top 5 stocks
+    scanner = StockScannerService(db)
+    try:
+        top_stocks = await scanner.scan_universe(interval="5minute", min_candles=60, top_n=5)
+        _log(f"Scanner found {len(top_stocks)} candidates")
+    except Exception as exc:
+        _log(f"Scanner failed: {exc}. Falling back to watchlist.")
+        top_stocks = []
+
+    # If scanner returns results, use them; otherwise fall back to old logic
+    if top_stocks:
+        # Pick the top stock with BUY or SELL signal
+        chosen = None
+        for stock in top_stocks:
+            instrument_key = stock["symbol"]
+            ml_signal = stock["ml_signal"]
+            
+            if ml_signal in ["BUY", "SELL"]:
+                # Fetch current price
+                quotes_resp = await upstox.get_quotes(credential.access_token, [instrument_key])
+                quote = (quotes_resp.get("data") or {}).get(instrument_key) or {}
+                last_price = float(quote.get("last_price") or 0)
+                
+                if last_price > 0 and last_price <= capital * 0.5:
+                    chosen = (instrument_key, ml_signal, last_price, stock["intraday_score"])
+                    break
+        
+        if chosen:
+            instrument_key, signal, last_price, score = chosen
+            label = LABEL.get(instrument_key, instrument_key.split("|")[-1])
+            
+            # Position size
+            max_per_trade = capital * 0.2
+            quantity = max(int(max_per_trade / last_price), 1)
+            cost = quantity * last_price
+            
+            _log(f"BEST: {label} | Score: {score:.2f} | Signal: {signal} | ₹{last_price:.2f} x {quantity} = ₹{cost:.2f}")
+            
+            try:
+                resp = await _place_order(upstox, credential, instrument_key, signal, quantity, paper_trading)
+                await db["trades"].insert_one({
+                    "user_id": user_id, "strategy_name": "auto-scanner",
+                    "instrument_key": instrument_key, "side": signal,
+                    "quantity": quantity, "price": last_price,
+                    "status": resp.get("status", "submitted"),
+                    "upstox_order_id": resp.get("data", {}).get("order_id"),
+                    "pnl": None, "metadata_json": resp.get("_payload"),
+                    "created_at": datetime.now(timezone.utc),
+                })
+                signed_qty = quantity if signal == "BUY" else -quantity
+                await db["positions"].update_one(
+                    {"user_id": user_id, "instrument_key": instrument_key},
+                    {"$set": {"quantity": signed_qty, "average_price": last_price,
+                              "last_price": last_price, "updated_at": datetime.now(timezone.utc)}},
+                    upsert=True,
+                )
+                _status["active_position"] = {"instrument": label, "entry": last_price, "current": last_price,
+                                               "qty": signed_qty, "pnl": 0.0, "pnl_pct": 0.0}
+                _log(f"ENTRY {signal} {label} x{quantity} @ ₹{last_price:.2f} [{'PAPER' if paper_trading else 'LIVE'}]")
+                alerts.publish("trade.executed", {"instrument_key": instrument_key, "side": signal,
+                                                   "quantity": quantity, "price": last_price, "paper": paper_trading})
+                return
+            except Exception as exc:
+                _log(f"Entry order failed for {label}: {exc}")
+                return
+    
+    # Fallback to old watchlist logic if scanner didn't find anything
+    _log("No scanner results. Using watchlist fallback...")
 
     quotes_resp = await upstox.get_quotes(credential.access_token, WATCHLIST)
     quotes: dict = quotes_resp.get("data") or {}

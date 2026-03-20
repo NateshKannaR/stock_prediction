@@ -26,7 +26,9 @@ from app.schemas.common import (
 from app.services.auto_trader import get_status, start_auto_trader, stop_auto_trader
 from app.services.backtester import Backtester
 from app.services.market_data import MarketDataService
+from app.services.news_sentiment import COMPANY_NAMES, NewsSentimentService
 from app.services.predictor import PredictionService
+from app.services.stock_scanner import StockScannerService
 from app.services.trading_engine import TradingEngineService
 from app.services.upstox import UpstoxService
 
@@ -144,7 +146,14 @@ async def train_model(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     ALL = [
         "NSE_EQ|INE002A01018", "NSE_EQ|INE467B01029", "NSE_EQ|INE040A01034",
         "NSE_EQ|INE009A01021", "NSE_EQ|INE090A01021", "NSE_EQ|INE062A01020",
-        "NSE_EQ|INE397D01024", "NSE_EQ|INE154A01025", "NSE_EQ|INE018A01030", "NSE_EQ|INE030A01027",
+        "NSE_EQ|INE397D01024", "NSE_EQ|INE154A01025", "NSE_EQ|INE018A01030",
+        "NSE_EQ|INE030A01027", "NSE_EQ|INE155A01022", "NSE_EQ|INE721A01013",
+        "NSE_EQ|INE019A01038", "NSE_EQ|INE238A01034", "NSE_EQ|INE120A01034",
+        "NSE_EQ|INE752E01010", "NSE_EQ|INE742F01042", "NSE_EQ|INE066A01021",
+        "NSE_EQ|INE101D01020", "NSE_EQ|INE239A01016", "NSE_EQ|INE040H01021",
+        "NSE_EQ|INE002S01010", "NSE_EQ|INE192A01025", "NSE_EQ|INE114A01011",
+        "NSE_EQ|INE296A01024", "NSE_EQ|INE860A01027", "NSE_EQ|INE075A01022",
+        "NSE_EQ|INE769A01020", "NSE_EQ|INE213A01029", "NSE_EQ|INE021A01026",
     ]
     frames = []
     for key in ALL:
@@ -168,12 +177,77 @@ async def train_model(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/scanner/scan")
+async def scan_stocks(
+    payload: dict,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Scan stock universe and return top N ranked stocks for intraday."""
+    interval = payload.get("interval", "5minute")
+    top_n = payload.get("top_n", 5)
+    min_candles = payload.get("min_candles", 100)
+    include_sentiment = payload.get("include_sentiment", True)
+    
+    scanner = StockScannerService(db)
+    top_stocks = await scanner.scan_universe(interval, min_candles, top_n, include_sentiment)
+    
+    return {
+        "top_stocks": top_stocks,
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "interval": interval,
+        "total_scanned": len(top_stocks),
+        "sentiment_enabled": include_sentiment,
+    }
+
+
+@router.get("/scanner/latest")
+async def get_latest_scan(
+    limit: int = 10,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Get latest scan results from database."""
+    scanner = StockScannerService(db)
+    results = await scanner.get_latest_scan(limit)
+    return {"results": results}
+
+
+@router.get("/sentiment/{instrument_key}")
+async def get_stock_sentiment(
+    instrument_key: str,
+    hours: int = 24,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Get news sentiment for a specific stock."""
+    company_name = COMPANY_NAMES.get(instrument_key, instrument_key.split("|")[-1])
+    sentiment_service = NewsSentimentService(db)
+    return await sentiment_service.get_stock_sentiment(instrument_key, company_name, hours)
+
+
+@router.get("/sentiment/{instrument_key}/history")
+async def get_sentiment_history(
+    instrument_key: str,
+    days: int = 7,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Get historical sentiment for a stock."""
+    sentiment_service = NewsSentimentService(db)
+    history = await sentiment_service.get_sentiment_history(instrument_key, days)
+    return {"instrument_key": instrument_key, "history": history}
+
+
 @router.get("/predictions/signals", response_model=list[PredictionResponse])
 async def prediction_signals(instrument_keys: str | None = None, interval: str = "day", db: AsyncIOMotorDatabase = Depends(get_db)) -> list[PredictionResponse]:
     ALL = [
         "NSE_EQ|INE002A01018", "NSE_EQ|INE467B01029", "NSE_EQ|INE040A01034",
         "NSE_EQ|INE009A01021", "NSE_EQ|INE090A01021", "NSE_EQ|INE062A01020",
-        "NSE_EQ|INE397D01024", "NSE_EQ|INE154A01025", "NSE_EQ|INE018A01030", "NSE_EQ|INE030A01027",
+        "NSE_EQ|INE397D01024", "NSE_EQ|INE154A01025", "NSE_EQ|INE018A01030",
+        "NSE_EQ|INE030A01027", "NSE_EQ|INE155A01022", "NSE_EQ|INE721A01013",
+        "NSE_EQ|INE019A01038", "NSE_EQ|INE238A01034", "NSE_EQ|INE120A01034",
+        "NSE_EQ|INE752E01010", "NSE_EQ|INE742F01042", "NSE_EQ|INE066A01021",
+        "NSE_EQ|INE101D01020", "NSE_EQ|INE239A01016", "NSE_EQ|INE040H01021",
+        "NSE_EQ|INE002S01010", "NSE_EQ|INE192A01025", "NSE_EQ|INE114A01011",
+        "NSE_EQ|INE296A01024", "NSE_EQ|INE860A01027", "NSE_EQ|INE075A01022",
+        "NSE_EQ|INE769A01020", "NSE_EQ|INE213A01029", "NSE_EQ|INE021A01026",
     ]
     keys = [k.strip() for k in instrument_keys.split(",")] if instrument_keys else ALL
     predictor = PredictionService()
@@ -404,25 +478,168 @@ async def market_news(q: str = "NSE stock market India") -> dict:
         return {"articles": []}
 
 
+@router.get("/news/stock/{instrument_key}")
+async def stock_specific_news(
+    instrument_key: str,
+    hours: int = 48,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Get news specifically about a stock (filtered and verified)."""
+    from app.core.config import get_settings
+    from app.services.news_sentiment import COMPANY_NAMES, COMPANY_SEARCH_TERMS
+    
+    settings = get_settings()
+    company_name = COMPANY_NAMES.get(instrument_key, instrument_key.split("|")[-1])
+    
+    # Build targeted query
+    specific_query = f'"{company_name}" AND (stock OR shares OR market OR trading OR earnings OR profit OR revenue)'
+    
+    try:
+        async with __import__('httpx').AsyncClient(timeout=10) as c:
+            r = await c.get(
+                "https://newsdata.io/api/1/news",
+                params={
+                    "apikey": settings.news_api_key,
+                    "q": specific_query,
+                    "country": "in",
+                    "language": "en",
+                    "category": "business",
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+        
+        # Filter articles to ensure company name is in title or description
+        articles = []
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        
+        for a in data.get("results", []):
+            title = a.get("title", "").lower()
+            description = a.get("description", "").lower()
+            company_lower = company_name.lower()
+            
+            # Verify company name appears in content
+            if company_lower not in title and company_lower not in description:
+                # Try alternative names
+                if instrument_key in COMPANY_SEARCH_TERMS:
+                    found = False
+                    for alt_name in COMPANY_SEARCH_TERMS[instrument_key]:
+                        if alt_name.lower() in title or alt_name.lower() in description:
+                            found = True
+                            break
+                    if not found:
+                        continue
+                else:
+                    continue
+            
+            # Check time window
+            pub_date = a.get("pubDate", "")
+            try:
+                pub_dt = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+                if pub_dt < cutoff:
+                    continue
+            except Exception:
+                pass
+            
+            articles.append({
+                "title": a.get("title", ""),
+                "description": a.get("description") or "",
+                "url": a.get("link", ""),
+                "source": a.get("source_name") or a.get("source_id", ""),
+                "published_at": pub_date,
+                "image": a.get("image_url") or "",
+            })
+            
+            if len(articles) >= 15:
+                break
+        
+        return {"articles": articles, "company": company_name}
+    
+    except Exception as e:
+        return {"articles": [], "company": company_name, "error": str(e)}
+
+
 @router.get("/account/funds")
 async def account_funds(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
     upstox = UpstoxService(db)
-    credential = await upstox.get_credential(_user_id(user))
-    async with __import__('httpx').AsyncClient(timeout=15) as c:
-        r = await c.get(
-            "https://api.upstox.com/v2/user/get-funds-and-margin",
-            headers={"Authorization": f"Bearer {credential.access_token}", "Accept": "application/json"},
-        )
-        r.raise_for_status()
-        data = r.json().get("data", {})
-    equity = data.get("equity", {})
-    return {
-        "available_margin": equity.get("available_margin", 0),
-        "used_margin": equity.get("used_margin", 0),
-        "payin_amount": equity.get("payin_amount", 0),
-        "notional_cash": equity.get("notional_cash", 0),
-    }
+    
+    try:
+        credential = await upstox.get_credential(_user_id(user))
+    except Exception:
+        # No credentials stored
+        return {
+            "available_margin": 0,
+            "used_margin": 0,
+            "payin_amount": 0,
+            "notional_cash": 0,
+            "error": "Upstox credentials not configured"
+        }
+    
+    try:
+        async with __import__('httpx').AsyncClient(timeout=15) as c:
+            r = await c.get(
+                "https://api.upstox.com/v2/user/get-funds-and-margin",
+                headers={"Authorization": f"Bearer {credential.access_token}", "Accept": "application/json"},
+            )
+            r.raise_for_status()
+            data = r.json().get("data", {})
+        equity = data.get("equity", {})
+        return {
+            "available_margin": equity.get("available_margin", 0),
+            "used_margin": equity.get("used_margin", 0),
+            "payin_amount": equity.get("payin_amount", 0),
+            "notional_cash": equity.get("notional_cash", 0),
+        }
+    except __import__('httpx').HTTPStatusError as e:
+        # Handle specific HTTP errors
+        if e.response.status_code == 423:
+            # Check if it's service hours error
+            try:
+                error_data = e.response.json()
+                error_msg = error_data.get('errors', [{}])[0].get('message', '')
+                if 'service hours' in error_msg.lower() or 'accessible from' in error_msg.lower():
+                    return {
+                        "available_margin": 0,
+                        "used_margin": 0,
+                        "payin_amount": 0,
+                        "notional_cash": 0,
+                        "error": "Upstox Funds API available only from 5:30 AM to 12:00 AM IST"
+                    }
+            except:
+                pass
+            return {
+                "available_margin": 0,
+                "used_margin": 0,
+                "payin_amount": 0,
+                "notional_cash": 0,
+                "error": "Upstox access token expired. Please re-authenticate."
+            }
+        elif e.response.status_code == 401:
+            return {
+                "available_margin": 0,
+                "used_margin": 0,
+                "payin_amount": 0,
+                "notional_cash": 0,
+                "error": "Upstox authentication failed. Please check credentials."
+            }
+        else:
+            return {
+                "available_margin": 0,
+                "used_margin": 0,
+                "payin_amount": 0,
+                "notional_cash": 0,
+                "error": f"Upstox API error: {e.response.status_code}"
+            }
+    except Exception as e:
+        # Generic error handling
+        return {
+            "available_margin": 0,
+            "used_margin": 0,
+            "payin_amount": 0,
+            "notional_cash": 0,
+            "error": "Unable to fetch account funds"
+        }
 
 
 @router.get("/portfolio/summary")

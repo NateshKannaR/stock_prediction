@@ -165,7 +165,7 @@ function findQuoteForInstrument(data: Record<string, MarketQuoteRow>, instrument
 
 export function LiveMarketBoard({ instruments }: { instruments: LiveMarketInstrument[] }) {
   const [rows, setRows] = useState<QuoteTableRow[]>([]);
-  const [selectedInstrumentKey, setSelectedInstrumentKey] = useState<string>(instruments[0]?.instrumentKey ?? "");
+  const [selectedInstrumentKey, setSelectedInstrumentKey] = useState<string>("");
   const [selectedRange, setSelectedRange] = useState<ChartRangeKey>("1D");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [quotesLoading, setQuotesLoading] = useState<boolean>(true);
@@ -174,8 +174,8 @@ export function LiveMarketBoard({ instruments }: { instruments: LiveMarketInstru
   const [chartData, setChartData] = useState<Array<{ timestamp: string; close: number }>>([]);
 
   useEffect(() => {
-    if (!instruments.some((instrument) => instrument.instrumentKey === selectedInstrumentKey)) {
-      setSelectedInstrumentKey(instruments[0]?.instrumentKey ?? "");
+    if (!instruments.some((instrument) => instrument.instrumentKey === selectedInstrumentKey) && selectedInstrumentKey !== "") {
+      setSelectedInstrumentKey("");
     }
   }, [instruments, selectedInstrumentKey]);
 
@@ -296,55 +296,139 @@ export function LiveMarketBoard({ instruments }: { instruments: LiveMarketInstru
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-        <Panel>
-          {selectedRow ? (
-            <div>
-              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-accent">{selectedRow.instrumentKey}</p>
-                  <h2 className="mt-3 text-3xl font-semibold text-text">{selectedRow.symbol}</h2>
-                  <div className="mt-3 flex flex-wrap items-baseline gap-3">
-                    <p className="text-4xl font-semibold text-text">{formatPrice(selectedRow.lastPrice)}</p>
-                    <p className={selectedPositive ? "text-accent" : "text-danger"}>
-                      {formatChange(selectedRow.netChange)} ({formatPercent(selectedRow.percentChange)})
-                    </p>
-                  </div>
-                </div>
-                <div className="text-sm text-muted">Last refresh: {formatTime(lastUpdated)}</div>
-              </div>
+      {/* Watchlist Grid - Always Visible */}
+      <Panel>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-semibold text-text">Live Watchlist</h2>
+            <p className="mt-1 text-sm text-muted">
+              Click any stock to view detailed quote information and price chart
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-muted">Tracked: {instruments.length} stocks</div>
+            <div className="text-xs text-muted">Updated: {formatTime(lastUpdated)}</div>
+          </div>
+        </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">Open</p>
-                  <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.open)}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">High</p>
-                  <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.high)}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">Low</p>
-                  <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.low)}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">Prev Close</p>
-                  <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.close)}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">Volume</p>
-                  <p className="mt-2 text-xl font-medium text-text">{formatNumber(selectedRow.volume)}</p>
-                </div>
-                <div className="rounded-2xl border border-border bg-[#0f162a]/80 p-4 sm:col-span-2 xl:col-span-3">
-                  <p className="text-xs uppercase tracking-[0.24em] text-muted">Market Snapshot</p>
-                  <p className="mt-2 text-sm text-muted">
-                    Select any stock from the watchlist to inspect its live quote snapshot and stored price curve.
+        {quoteErrorMessage ? (
+          <div className="rounded-xl border border-danger/40 bg-danger/5 px-4 py-3 text-sm text-danger">
+            ⚠️ {quoteErrorMessage}
+          </div>
+        ) : null}
+
+        {quotesLoading && rows.length === 0 ? (
+          <div className="space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="rounded-xl border border-border bg-panel/50 px-4 py-3 animate-pulse">
+                <div className="h-4 bg-border rounded w-32 mb-2"></div>
+                <div className="h-5 bg-border rounded w-24"></div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((row) => {
+              const isPositive = (row.netChange ?? 0) >= 0;
+
+              return (
+                <button
+                  key={row.instrumentKey}
+                  type="button"
+                  onClick={() => setSelectedInstrumentKey(row.instrumentKey)}
+                  className="w-full rounded-xl border border-border bg-panel px-4 py-3 text-left transition hover:border-accent/50 hover:bg-panel/80 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-text">{row.symbol}</div>
+                      <div className="text-xs text-muted truncate">{row.label}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="text-right">
+                      <div className="text-lg font-semibold text-text">{formatPrice(row.lastPrice)}</div>
+                      <div className={`text-sm font-medium ${isPositive ? "text-accent" : "text-danger"}`}>
+                        {formatChange(row.netChange)} ({formatPercent(row.percentChange)})
+                      </div>
+                    </div>
+                    <div className="text-muted">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+
+      {/* Stock Details Modal - Overlay */}
+      {selectedInstrumentKey && selectedRow && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedInstrumentKey("");
+            }
+          }}
+        >
+          <div 
+            className="w-full max-w-6xl max-h-[90vh] overflow-y-auto rounded-2xl border border-border bg-panel p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with Close Button */}
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-accent">{selectedRow.instrumentKey}</p>
+                <h2 className="mt-2 text-3xl font-semibold text-text">{selectedRow.symbol}</h2>
+                <div className="mt-3 flex flex-wrap items-baseline gap-3">
+                  <p className="text-4xl font-semibold text-text">{formatPrice(selectedRow.lastPrice)}</p>
+                  <p className={selectedPositive ? "text-accent" : "text-danger"}>
+                    {formatChange(selectedRow.netChange)} ({formatPercent(selectedRow.percentChange)})
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setSelectedInstrumentKey("")}
+                className="text-3xl text-muted hover:text-text transition flex-shrink-0 ml-4 cursor-pointer"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
 
-              <div className="mt-6">
-                <div className="mb-4 flex flex-wrap gap-2">
+            {/* OHLC Data */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 mb-6">
+              <div className="rounded-xl border border-border bg-[#0f162a]/80 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted">Open</p>
+                <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.open)}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-[#0f162a]/80 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted">High</p>
+                <p className="mt-2 text-xl font-medium text-accent">{formatPrice(selectedRow.high)}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-[#0f162a]/80 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted">Low</p>
+                <p className="mt-2 text-xl font-medium text-danger">{formatPrice(selectedRow.low)}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-[#0f162a]/80 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted">Prev Close</p>
+                <p className="mt-2 text-xl font-medium text-text">{formatPrice(selectedRow.close)}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-[#0f162a]/80 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-muted">Volume</p>
+                <p className="mt-2 text-xl font-medium text-text">{formatNumber(selectedRow.volume)}</p>
+              </div>
+            </div>
+
+            {/* Price Chart */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-text">Price Chart</h3>
+                <div className="flex flex-wrap gap-2">
                   {rangeTabs.map((range) => {
                     const active = range === selectedRange;
                     return (
@@ -363,76 +447,27 @@ export function LiveMarketBoard({ instruments }: { instruments: LiveMarketInstru
                     );
                   })}
                 </div>
-                {chartData.length > 0 ? (
-                  <PriceChart data={chartData} />
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-border px-5 py-10 text-sm text-muted">
-                    {quotesLoading
-                      ? "Loading stock data..."
-                      : chartErrorMessage
-                      ? chartErrorMessage
-                      : `No candle history is available for ${selectedRow.instrumentKey}.`}
-                  </div>
-                )}
               </div>
+              {chartData.length > 0 ? (
+                <PriceChart data={chartData} />
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border px-5 py-10 text-center text-sm text-muted">
+                  {quotesLoading
+                    ? "Loading chart data..."
+                    : chartErrorMessage
+                    ? chartErrorMessage
+                    : `No chart data available for ${selectedRow.symbol}`}
+                </div>
+              )}
             </div>
-          ) : (
-            <p className="text-sm text-muted">No instruments configured for the live market page.</p>
-          )}
-        </Panel>
 
-        <Panel>
-          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div>
-              <h2 className="text-lg font-medium text-text">Live Watchlist</h2>
-              <p className="mt-1 text-sm text-muted">
-                Click any stock to open its quote details and price chart. This is a watchlist, not the full exchange universe.
-              </p>
+            {/* Additional Info */}
+            <div className="mt-6 text-xs text-muted text-center">
+              Last updated: {formatTime(lastUpdated)} • Click outside or press × to close
             </div>
-            <div className="text-sm text-muted">Tracked: {instruments.length}</div>
           </div>
-
-          {quoteErrorMessage ? <p className="mt-4 text-sm text-red-300">{quoteErrorMessage}</p> : null}
-
-          <div className="mt-5 space-y-2">
-            {quotesLoading && rows.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-[#0f162a]/80 px-4 py-4 text-sm text-muted">
-                Loading watchlist...
-              </div>
-            ) : null}
-            {rows.map((row) => {
-              const isSelected = row.instrumentKey === selectedInstrumentKey;
-              const isPositive = (row.netChange ?? 0) >= 0;
-
-              return (
-                <button
-                  key={row.instrumentKey}
-                  type="button"
-                  onClick={() => setSelectedInstrumentKey(row.instrumentKey)}
-                  className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
-                    isSelected
-                      ? "border-accent bg-[#12253a] shadow-[0_0_0_1px_rgba(41,211,145,0.2)]"
-                      : "border-border bg-[#0f162a]/80 hover:border-[#33507a] hover:bg-[#131c31]"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="font-medium text-text">{row.symbol}</div>
-                      <div className="mt-1 text-xs text-muted">{row.instrumentKey}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-medium text-text">{formatPrice(row.lastPrice)}</div>
-                      <div className={`mt-1 text-sm ${isPositive ? "text-accent" : "text-danger"}`}>
-                        {formatChange(row.netChange)} ({formatPercent(row.percentChange)})
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Panel>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

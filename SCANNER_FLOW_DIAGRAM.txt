@@ -1,0 +1,238 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              STOCK SCANNER & AUTO-TRADING FLOW DIAGRAM                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         STOCK UNIVERSE (30+ Stocks)                         │
+│  Reliance • HDFC Bank • Infosys • TCS • ICICI Bank • SBI • Tata Steel      │
+│  ITC • L&T • Bharti Airtel • Asian Paints • Axis Bank • Maruti • Wipro     │
+│  Titan • HCL Tech • Tech Mahindra • Bajaj Finance • Nestle • Adani Ports   │
+│                            ... and more                                     │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        STOCK SCANNER SERVICE                                │
+│                                                                             │
+│  For each stock:                                                            │
+│    1. Fetch recent candles (100-120 bars)                                  │
+│    2. Calculate technical indicators                                        │
+│    3. Compute 8 metrics:                                                    │
+│       • Volatility (ATR)         → Profit potential                         │
+│       • Volume Surge             → Move confirmation                        │
+│       • Trend Strength (ADX)     → Tradability                              │
+│       • ML Confidence            → AI prediction quality                    │
+│       • ML Signal (BUY/SELL)     → Direction                                │
+│       • Liquidity                → Slippage reduction                       │
+│       • Momentum                 → Recent price change                      │
+│       • Sector                   → Diversification                          │
+│    4. Calculate composite score:                                            │
+│       score = volatility*0.25 + volume*0.25 + trend*0.20 +                 │
+│               ml_conf*0.20 + (1/liquidity)*0.10                             │
+│       if signal in [BUY, SELL]: score *= 1.2                                │
+│                                                                             │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         RANKED STOCKS (Top 5)                               │
+│                                                                             │
+│  Rank  Symbol          Score   Signal  Confidence  Volatility  Volume      │
+│  ────  ──────────────  ──────  ──────  ──────────  ──────────  ──────      │
+│   #1   RELIANCE        0.8234  BUY     89%         2.34%       2.45x       │
+│   #2   HDFCBANK        0.7891  BUY     82%         1.89%       1.98x       │
+│   #3   INFY            0.7456  SELL    76%         2.12%       2.10x       │
+│   #4   TCS             0.7123  BUY     71%         1.67%       1.75x       │
+│   #5   ICICIBANK       0.6890  HOLD    68%         1.95%       1.60x       │
+│                                                                             │
+│  ✓ Stored in stock_scores table                                            │
+│  ✓ Available via /api/v1/scanner/latest                                    │
+│                                                                             │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        AUTO-TRADING ENGINE                                  │
+│                                                                             │
+│  Every 15-30 minutes:                                                       │
+│                                                                             │
+│  1. Check for open position                                                 │
+│     ├─ If position exists:                                                  │
+│     │  ├─ Fetch current price                                               │
+│     │  ├─ Calculate P&L                                                     │
+│     │  ├─ Check profit target (1%)                                          │
+│     │  ├─ Check stop-loss (0.5%)                                            │
+│     │  └─ Exit if target/stop hit                                           │
+│     │                                                                        │
+│     └─ If no position:                                                      │
+│        ├─ Call scanner.scan_universe()                                      │
+│        ├─ Get top 5 ranked stocks                                           │
+│        ├─ Pick highest with BUY/SELL signal                                 │
+│        ├─ Verify affordability (price ≤ 50% capital)                        │
+│        ├─ Calculate position size (20% of capital)                          │
+│        ├─ Place market order                                                │
+│        └─ Store in positions table                                          │
+│                                                                             │
+│  2. Check daily loss limit                                                  │
+│     └─ If loss ≥ limit: disable auto-trading                                │
+│                                                                             │
+│  3. Auto square-off at 3:15 PM                                              │
+│     └─ Close all positions before market close                              │
+│                                                                             │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          TRADE EXECUTION                                    │
+│                                                                             │
+│  Entry:                                                                     │
+│    • Stock: RELIANCE (highest score, BUY signal)                            │
+│    • Price: ₹2,450.50                                                       │
+│    • Quantity: 4 shares (₹9,802 = 20% of ₹50,000)                          │
+│    • Order: Market BUY                                                      │
+│    • Status: Filled                                                         │
+│                                                                             │
+│  Monitoring:                                                                │
+│    • Entry: ₹2,450.50                                                       │
+│    • Current: ₹2,465.75                                                     │
+│    • P&L: +₹61.00 (+0.62%)                                                  │
+│    • Target: ₹2,475.00 (+1.0%)                                              │
+│    • Stop: ₹2,438.25 (-0.5%)                                                │
+│                                                                             │
+│  Exit (when target hit):                                                    │
+│    • Price: ₹2,475.00                                                       │
+│    • P&L: +₹98.00 (+1.0%)                                                   │
+│    • Order: Market SELL                                                     │
+│    • Status: Filled                                                         │
+│                                                                             │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        DATABASE PERSISTENCE                                 │
+│                                                                             │
+│  trades table:                                                              │
+│    • user_id, strategy_name: "auto-scanner"                                │
+│    • instrument_key, side, quantity, price                                  │
+│    • status, upstox_order_id, pnl                                           │
+│    • created_at                                                             │
+│                                                                             │
+│  positions table:                                                           │
+│    • user_id, instrument_key                                                │
+│    • quantity, average_price, last_price                                    │
+│    • unrealized_pnl, realized_pnl                                           │
+│    • updated_at                                                             │
+│                                                                             │
+│  stock_scores table:                                                        │
+│    • symbol, scan_time                                                      │
+│    • intraday_score, all metrics                                            │
+│    • ml_signal, sector                                                      │
+│                                                                             │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          FRONTEND DASHBOARD                                 │
+│                                                                             │
+│  Stock Scanner Panel:                                                       │
+│    • Scan trigger button                                                    │
+│    • Interval selector (1min, 5min, 15min, 30min)                          │
+│    • Top N selector (3, 5, 10)                                              │
+│    • Live ranking table                                                     │
+│    • Last scan timestamp                                                    │
+│                                                                             │
+│  Auto-Trading Status:                                                       │
+│    • Enabled/Disabled toggle                                                │
+│    • Current position details                                               │
+│    • Today's P&L: +₹450.50                                                  │
+│    • Today's trades: 3                                                      │
+│    • Last cycle: 10:35:00                                                   │
+│    • Logs: Recent activity                                                  │
+│                                                                             │
+│  Portfolio:                                                                 │
+│    • Open positions                                                         │
+│    • Trade history                                                          │
+│    • Performance metrics                                                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                            KEY DECISION POINTS                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+1. STOCK SELECTION
+   ├─ Scanner finds 5 candidates
+   ├─ Filter: Only BUY/SELL signals (not HOLD)
+   ├─ Filter: Price ≤ 50% of capital
+   └─ Pick: Highest intraday_score
+
+2. POSITION SIZING
+   ├─ Max per trade: 20% of capital
+   ├─ Min quantity: 1 share
+   └─ Cost = quantity × price
+
+3. EXIT TRIGGERS
+   ├─ Profit target: +1.0% (configurable)
+   ├─ Stop-loss: -0.5% (configurable)
+   ├─ Time-based: 3:15 PM (auto square-off)
+   └─ Daily loss limit: ₹2,000 (halts trading)
+
+4. RISK CONTROLS
+   ├─ Max 1 open position at a time
+   ├─ Paper trading mode available
+   ├─ Daily loss limit enforcement
+   └─ Market hours check (9:15 AM - 3:30 PM)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              DATA FLOW                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Upstox API → Historical Candles → MongoDB (candles table)
+                                      ↓
+                              Stock Scanner Service
+                                      ↓
+                              Composite Scoring
+                                      ↓
+                              MongoDB (stock_scores table)
+                                      ↓
+                              Auto-Trading Engine
+                                      ↓
+                              Order Execution
+                                      ↓
+                              MongoDB (trades, positions tables)
+                                      ↓
+                              Frontend Dashboard
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           TIMING & FREQUENCY                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+• Scanner: On-demand or every 15-30 min (auto-trader cycle)
+• Auto-trader: Every 30 seconds (checks position, executes logic)
+• Position monitoring: Real-time (every cycle)
+• Square-off: 3:15 PM IST (15 min before close)
+• Daily reset: 9:15 AM IST (new trading day)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              EXAMPLE SCENARIO                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+10:00 AM - Scanner runs, finds RELIANCE (score 0.82, BUY signal)
+10:01 AM - Auto-trader enters: BUY 4 shares @ ₹2,450.50
+10:15 AM - Price: ₹2,460 (+0.39%) - Hold
+10:30 AM - Price: ₹2,475 (+1.0%) - TARGET HIT!
+10:31 AM - Auto-trader exits: SELL 4 shares @ ₹2,475.00
+10:31 AM - P&L: +₹98.00 recorded
+10:45 AM - Scanner runs again, finds HDFCBANK (score 0.79, BUY signal)
+10:46 AM - Auto-trader enters: BUY 6 shares @ ₹1,650.00
+... cycle continues ...
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Your platform now intelligently selects and trades the best stocks daily!   ║
+╚══════════════════════════════════════════════════════════════════════════════╝

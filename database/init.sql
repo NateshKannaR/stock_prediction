@@ -88,3 +88,38 @@ CREATE TABLE IF NOT EXISTS auto_trading_state (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS stock_scores (
+  id BIGSERIAL PRIMARY KEY,
+  symbol VARCHAR(100) NOT NULL,
+  scan_time TIMESTAMPTZ NOT NULL,
+  intraday_score NUMERIC(10,4) NOT NULL,
+  volatility NUMERIC(10,4),
+  volume_surge NUMERIC(10,4),
+  trend_strength NUMERIC(10,4),
+  ml_confidence NUMERIC(10,4),
+  ml_signal VARCHAR(10),
+  liquidity NUMERIC(10,4),
+  momentum NUMERIC(10,4),
+  sector VARCHAR(50),
+  sentiment_score NUMERIC(10,4),
+  sentiment_label VARCHAR(20)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_scores_scan_time ON stock_scores (scan_time DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_scores_symbol ON stock_scores (symbol, scan_time DESC);
+
+CREATE TABLE IF NOT EXISTS news_sentiment (
+  id BIGSERIAL PRIMARY KEY,
+  symbol VARCHAR(100) NOT NULL,
+  company VARCHAR(200),
+  sentiment_score NUMERIC(10,4) NOT NULL,
+  sentiment_label VARCHAR(20) NOT NULL,
+  news_count INTEGER NOT NULL,
+  positive_count INTEGER NOT NULL,
+  negative_count INTEGER NOT NULL,
+  neutral_count INTEGER NOT NULL,
+  analyzed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_sentiment_symbol ON news_sentiment (symbol, analyzed_at DESC);
+

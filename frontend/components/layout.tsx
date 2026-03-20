@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PropsWithChildren } from "react";
+import { AIAssistant } from "@/components/ai-assistant";
 
 const navigation = [
   ["Dashboard", "/dashboard"],
@@ -36,6 +37,7 @@ export function AppShell({ children }: PropsWithChildren) {
         </aside>
         <main className="px-4 py-6 md:px-8">{children}</main>
       </div>
+      <AIAssistant />
     </div>
   );
 }

@@ -19,6 +19,26 @@ const STOCKS = [
   { label: "ITC",        key: "NSE_EQ|INE154A01025" },
   { label: "LT",         key: "NSE_EQ|INE018A01030" },
   { label: "HINDUNILVR", key: "NSE_EQ|INE030A01027" },
+  { label: "TATAMOTORS", key: "NSE_EQ|INE155A01022" },
+  { label: "TATASTEEL",  key: "NSE_EQ|INE721A01013" },
+  { label: "AXISBANK",   key: "NSE_EQ|INE019A01038" },
+  { label: "KOTAK",      key: "NSE_EQ|INE238A01034" },
+  { label: "ASIANPAINT", key: "NSE_EQ|INE120A01034" },
+  { label: "ADANIENT",   key: "NSE_EQ|INE752E01010" },
+  { label: "ADANIPORTS", key: "NSE_EQ|INE742F01042" },
+  { label: "MARUTI",     key: "NSE_EQ|INE066A01021" },
+  { label: "MAHINDRA",   key: "NSE_EQ|INE101D01020" },
+  { label: "WIPRO",      key: "NSE_EQ|INE239A01016" },
+  { label: "SUNPHARMA",  key: "NSE_EQ|INE040H01021" },
+  { label: "POWERGRID",  key: "NSE_EQ|INE002S01010" },
+  { label: "TITAN",      key: "NSE_EQ|INE192A01025" },
+  { label: "BAJFINANCE", key: "NSE_EQ|INE114A01011" },
+  { label: "BAJAJFINSV", key: "NSE_EQ|INE296A01024" },
+  { label: "HCL",        key: "NSE_EQ|INE860A01027" },
+  { label: "TECHM",      key: "NSE_EQ|INE075A01022" },
+  { label: "ONGC",       key: "NSE_EQ|INE769A01020" },
+  { label: "ULTRACEMCO", key: "NSE_EQ|INE213A01029" },
+  { label: "NESTLEIND",  key: "NSE_EQ|INE021A01026" },
 ];
 
 type Candle = { timestamp: string; close: number };
@@ -80,6 +100,7 @@ export default function DashboardPage() {
   const [nseChart, setNseChart] = useState<Candle[]>([]);
   const [bseChart, setBseChart] = useState<Candle[]>([]);
   const [updated, setUpdated] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     async function loadQuotes() {
@@ -106,6 +127,10 @@ export default function DashboardPage() {
 
   const nse = getQuote(NSE_KEY);
   const bse = getQuote(BSE_KEY);
+
+  const filteredStocks = STOCKS.filter(stock => 
+    stock.label.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
@@ -154,12 +179,47 @@ export default function DashboardPage() {
 
       {/* Stocks grid */}
       <div>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-4">
           <p className="text-xs uppercase tracking-widest text-muted">NSE Stocks</p>
-          <p className="text-xs text-muted">Updated {updated || "--"}</p>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search stocks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="rounded-xl border border-border bg-panel px-4 py-2 pl-10 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none w-64"
+              />
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted whitespace-nowrap">Updated {updated || "--"}</p>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-          {STOCKS.map((s) => {
+        {filteredStocks.length === 0 ? (
+          <Panel className="p-8 text-center">
+            <p className="text-muted">No stocks found matching "{searchQuery}"</p>
+            <button
+              onClick={() => setSearchQuery("")}
+              className="mt-3 text-sm text-accent hover:underline"
+            >
+              Clear search
+            </button>
+          </Panel>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+            {filteredStocks.map((s) => {
             const q = getQuote(s.key);
             const pos = (q?.net_change ?? 0) >= 0;
             return (
@@ -176,7 +236,8 @@ export default function DashboardPage() {
               </Panel>
             );
           })}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

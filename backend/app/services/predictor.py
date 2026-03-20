@@ -25,8 +25,8 @@ class PredictionService:
             mp = Path(self.settings.model_path)
             sp = Path(self.settings.scaler_path)
             if mp.exists() and sp.exists():
-                model = LSTMClassifier(input_size=len(FEATURE_COLUMNS), hidden_size=64, num_layers=2, num_classes=3)
-                model.load_state_dict(torch.load(mp, map_location="cpu"))
+                model = LSTMClassifier(input_size=len(FEATURE_COLUMNS), hidden_size=128, num_layers=2, num_classes=3)
+                model.load_state_dict(torch.load(mp, map_location="cpu", weights_only=False))
                 model.eval()
                 self._lstm = model
                 self._scaler = joblib.load(sp)
@@ -35,108 +35,165 @@ class PredictionService:
             pass
 
     def _indicator_signal(self, df: pd.DataFrame) -> tuple[str, float, dict]:
-        """Full indicator-based signal with confidence score."""
+        """Enhanced indicator-based signal with multi-timeframe analysis."""
         row = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else row
 
-        rsi = float(row.get("rsi_14", 50))
+        # Get all indicators
+        rsi_14 = float(row.get("rsi_14", 50))
+        rsi_7 = float(row.get("rsi_7", 50))
         macd = float(row.get("macd", 0))
         macd_sig = float(row.get("macd_signal", 0))
+        macd_diff = float(row.get("macd_diff", 0))
         macd_prev = float(prev.get("macd", 0))
         macd_sig_prev = float(prev.get("macd_signal", 0))
+        
         close = float(row["close"])
         sma20 = float(row.get("sma_20", close))
+        sma50 = float(row.get("sma_50", close))
         ema20 = float(row.get("ema_20", close))
+        ema12 = float(row.get("ema_12", close))
+        
         bb_high = float(row.get("bb_high", close * 1.02))
         bb_low = float(row.get("bb_low", close * 0.98))
+        bb_mid = float(row.get("bb_mid", close))
+        bb_position = float(row.get("bb_position", 0.5))
+        
+        atr = float(row.get("atr_14", 0))
+        adx = float(row.get("adx_14", 0))
+        
         vol = float(row.get("volume", 0))
         vol_ma = float(row.get("volume_ma_20", vol or 1))
+        vol_ratio = float(row.get("volume_ratio", 1))
+        
         returns = float(row.get("returns", 0))
+        returns_3d = float(row.get("returns_3d", 0))
+        returns_7d = float(row.get("returns_7d", 0))
         volatility = float(row.get("volatility_20", 0))
+        
+        price_to_sma20 = float(row.get("price_to_sma20", 0))
+        price_to_sma50 = float(row.get("price_to_sma50", 0))
 
         buy_score = 0.0
         sell_score = 0.0
 
-        # RSI signals
-        if rsi < 30:
-            buy_score += 30   # oversold — strong buy
-        elif rsi < 45:
-            buy_score += 15
-        elif rsi > 70:
-            sell_score += 30  # overbought — strong sell
-        elif rsi > 55:
-            sell_score += 15
+        # Multi-timeframe RSI analysis
+        if rsi_14 < 30 and rsi_7 < 35:
+            buy_score += 35  # Strong oversold
+        elif rsi_14 < 40:
+            buy_score += 20
+        elif rsi_14 > 70 and rsi_7 > 65:
+            sell_score += 35  # Strong overbought
+        elif rsi_14 > 60:
+            sell_score += 20
 
-        # MACD crossover
+        # MACD analysis with histogram
         macd_cross_up = macd_prev < macd_sig_prev and macd > macd_sig
         macd_cross_down = macd_prev > macd_sig_prev and macd < macd_sig
+        
         if macd_cross_up:
-            buy_score += 25
-        elif macd > macd_sig:
-            buy_score += 10
-        if macd_cross_down:
-            sell_score += 25
-        elif macd < macd_sig:
-            sell_score += 10
-
-        # Price vs SMA/EMA
-        if close > sma20 and close > ema20:
+            buy_score += 30
+        elif macd > macd_sig and macd_diff > 0:
             buy_score += 15
+        
+        if macd_cross_down:
+            sell_score += 30
+        elif macd < macd_sig and macd_diff < 0:
+            sell_score += 15
+
+        # Multi-timeframe trend analysis
+        if close > sma20 and close > sma50 and sma20 > sma50:
+            buy_score += 25  # Strong uptrend
+        elif close > sma20 and close > ema20:
+            buy_score += 15
+        elif close < sma20 and close < sma50 and sma20 < sma50:
+            sell_score += 25  # Strong downtrend
         elif close < sma20 and close < ema20:
             sell_score += 15
 
-        # Bollinger band position
-        bb_range = bb_high - bb_low
-        if bb_range > 0:
-            bb_pos = (close - bb_low) / bb_range
-            if bb_pos < 0.2:
-                buy_score += 20   # near lower band
-            elif bb_pos > 0.8:
-                sell_score += 20  # near upper band
+        # EMA crossover
+        if ema12 > ema20:
+            buy_score += 10
+        elif ema12 < ema20:
+            sell_score += 10
 
-        # Volume confirmation
-        if vol > vol_ma * 1.5:
+        # Bollinger Bands with position
+        if bb_position < 0.2:
+            buy_score += 25  # Near lower band
+        elif bb_position < 0.4:
+            buy_score += 10
+        elif bb_position > 0.8:
+            sell_score += 25  # Near upper band
+        elif bb_position > 0.6:
+            sell_score += 10
+
+        # ADX for trend strength
+        if adx > 25:  # Strong trend
             if buy_score > sell_score:
-                buy_score += 10
+                buy_score += 15
             else:
-                sell_score += 10
+                sell_score += 15
 
-        # Recent momentum
-        if returns > 0.01:
-            buy_score += 5
-        elif returns < -0.01:
-            sell_score += 5
+        # Volume confirmation with ratio
+        if vol_ratio > 1.5:
+            if buy_score > sell_score:
+                buy_score += 15
+            else:
+                sell_score += 15
+        elif vol_ratio > 1.2:
+            if buy_score > sell_score:
+                buy_score += 8
+            else:
+                sell_score += 8
 
+        # Multi-timeframe momentum
+        if returns_7d > 0.02 and returns_3d > 0.01:
+            buy_score += 10
+        elif returns_7d < -0.02 and returns_3d < -0.01:
+            sell_score += 10
+
+        # Calculate final signal
         total = buy_score + sell_score
         if total == 0:
             return "HOLD", 0.5, {}
 
-        if buy_score > sell_score and buy_score >= 40:
-            confidence = min(buy_score / (total + 20), 0.95)
+        if buy_score > sell_score and buy_score >= 50:
+            confidence = min(buy_score / (total + 30), 0.95)
             signal = "BUY"
-        elif sell_score > buy_score and sell_score >= 40:
-            confidence = min(sell_score / (total + 20), 0.95)
+        elif sell_score > buy_score and sell_score >= 50:
+            confidence = min(sell_score / (total + 30), 0.95)
             signal = "SELL"
         else:
             confidence = 0.5
             signal = "HOLD"
 
         indicators = {
-            "rsi_14": round(rsi, 2),
+            "rsi_14": round(rsi_14, 2),
+            "rsi_7": round(rsi_7, 2),
             "macd": round(macd, 4),
             "macd_signal": round(macd_sig, 4),
+            "macd_diff": round(macd_diff, 4),
             "macd_crossover": "bullish" if macd_cross_up else "bearish" if macd_cross_down else "none",
             "sma_20": round(sma20, 2),
+            "sma_50": round(sma50, 2),
             "ema_20": round(ema20, 2),
+            "ema_12": round(ema12, 2),
             "bb_high": round(bb_high, 2),
             "bb_low": round(bb_low, 2),
-            "bb_position_pct": round((close - bb_low) / bb_range * 100, 1) if bb_range > 0 else 50,
-            "volume_vs_avg": round(vol / vol_ma, 2) if vol_ma > 0 else 1,
+            "bb_mid": round(bb_mid, 2),
+            "bb_position_pct": round(bb_position * 100, 1),
+            "atr_14": round(atr, 2),
+            "adx_14": round(adx, 2),
+            "volume_vs_avg": round(vol_ratio, 2),
             "volatility_20": round(volatility * 100, 3),
             "returns_pct": round(returns * 100, 3),
-            "price_vs_sma": round((close - sma20) / sma20 * 100, 2),
+            "returns_3d_pct": round(returns_3d * 100, 3),
+            "returns_7d_pct": round(returns_7d * 100, 3),
+            "price_vs_sma20": round(price_to_sma20 * 100, 2),
+            "price_vs_sma50": round(price_to_sma50 * 100, 2),
             "buy_score": round(buy_score, 1),
             "sell_score": round(sell_score, 1),
+            "trend_strength": "strong" if adx > 25 else "weak",
         }
         return signal, round(confidence, 4), indicators
 
@@ -191,8 +248,9 @@ class PredictionService:
             source = "indicators"
 
         row = df.iloc[-1]
-        prev_close = float(df.iloc[-2]["close"]) if len(df) > 1 else float(row["close"])
-        change = float(row["close"]) - prev_close
+        close = float(row["close"])
+        prev_close = float(df.iloc[-2]["close"]) if len(df) > 1 else close
+        change = close - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0
 
         # Support / resistance from recent 20 candles
@@ -200,14 +258,30 @@ class PredictionService:
         support = float(recent["low"].min())
         resistance = float(recent["high"].max())
 
-        # Target and stop based on signal
-        close = float(row["close"])
+        # Dynamic target and stop based on ATR (Average True Range)
+        atr = float(row.get("atr_14", close * 0.02))  # Default 2% if ATR not available
+        volatility = float(row.get("volatility_20", 0.01))
+        
+        # Calculate risk-reward ratio based on volatility
+        # Higher volatility = wider stops and targets
+        atr_multiplier_target = 2.0 if volatility < 0.015 else 2.5 if volatility < 0.025 else 3.0
+        atr_multiplier_stop = 1.5 if volatility < 0.015 else 2.0 if volatility < 0.025 else 2.5
         if signal == "BUY":
-            target = round(close * 1.015, 2)
-            stop = round(close * 0.992, 2)
+            # Target: Current price + (ATR * multiplier)
+            target = round(close + (atr * atr_multiplier_target), 2)
+            # Stop: Current price - (ATR * multiplier)
+            stop = round(close - (atr * atr_multiplier_stop), 2)
+            # Ensure minimum 1% target and 0.5% stop
+            target = max(target, close * 1.01)
+            stop = min(stop, close * 0.995)
         elif signal == "SELL":
-            target = round(close * 0.985, 2)
-            stop = round(close * 1.008, 2)
+            # Target: Current price - (ATR * multiplier)
+            target = round(close - (atr * atr_multiplier_target), 2)
+            # Stop: Current price + (ATR * multiplier)
+            stop = round(close + (atr * atr_multiplier_stop), 2)
+            # Ensure minimum 1% target and 0.5% stop
+            target = min(target, close * 0.99)
+            stop = max(stop, close * 1.005)
         else:
             target = close
             stop = close

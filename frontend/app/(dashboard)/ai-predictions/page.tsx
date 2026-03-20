@@ -16,6 +16,26 @@ const LABELS: Record<string, string> = {
   "NSE_EQ|INE154A01025": "ITC",
   "NSE_EQ|INE018A01030": "LT",
   "NSE_EQ|INE030A01027": "HINDUNILVR",
+  "NSE_EQ|INE155A01022": "TATAMOTORS",
+  "NSE_EQ|INE721A01013": "TATASTEEL",
+  "NSE_EQ|INE019A01038": "AXISBANK",
+  "NSE_EQ|INE238A01034": "KOTAK",
+  "NSE_EQ|INE120A01034": "ASIANPAINT",
+  "NSE_EQ|INE752E01010": "ADANIENT",
+  "NSE_EQ|INE742F01042": "ADANIPORTS",
+  "NSE_EQ|INE066A01021": "MARUTI",
+  "NSE_EQ|INE101D01020": "MAHINDRA",
+  "NSE_EQ|INE239A01016": "WIPRO",
+  "NSE_EQ|INE040H01021": "SUNPHARMA",
+  "NSE_EQ|INE002S01010": "POWERGRID",
+  "NSE_EQ|INE192A01025": "TITAN",
+  "NSE_EQ|INE114A01011": "BAJFINANCE",
+  "NSE_EQ|INE296A01024": "BAJAJFINSV",
+  "NSE_EQ|INE860A01027": "HCL",
+  "NSE_EQ|INE075A01022": "TECHM",
+  "NSE_EQ|INE769A01020": "ONGC",
+  "NSE_EQ|INE213A01029": "ULTRACEMCO",
+  "NSE_EQ|INE021A01026": "NESTLEIND",
 };
 
 type Prediction = {
@@ -156,6 +176,9 @@ export default function PredictionsPage() {
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [historicalData, setHistoricalData] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [stockNews, setStockNews] = useState<any[]>([]);
+  const [loadingNews, setLoadingNews] = useState(false);
+  const [sentiment, setSentiment] = useState<any>(null);
 
   async function load() {
     setLoading(true);
@@ -179,6 +202,27 @@ export default function PredictionsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function loadStockNews(instrumentKey: string) {
+    setLoadingNews(true);
+    try {
+      // Fetch sentiment with news (this already uses targeted queries)
+      const sentimentRes = await fetch(`http://localhost:8000/api/v1/sentiment/${encodeURIComponent(instrumentKey)}?hours=48`);
+      const sentimentData = await sentimentRes.json();
+      setSentiment(sentimentData);
+      
+      // Use dedicated stock-specific news endpoint
+      const newsRes = await fetch(`http://localhost:8000/api/v1/news/stock/${encodeURIComponent(instrumentKey)}?hours=72`);
+      const newsData = await newsRes.json();
+      
+      setStockNews(newsData.articles || []);
+    } catch (e) {
+      console.error("Failed to load news:", e);
+      setStockNews([]);
+      setSentiment(null);
+    }
+    setLoadingNews(false);
+  }
 
   async function loadHistoricalData(instrumentKey: string) {
     setLoadingHistory(true);
@@ -225,6 +269,7 @@ export default function PredictionsPage() {
   function handleStockSelect(instrumentKey: string) {
     setSelectedStock(instrumentKey);
     loadHistoricalData(instrumentKey);
+    loadStockNews(instrumentKey);
   }
 
   const filtered = filter === "ALL" ? predictions : predictions.filter((p) => p.signal === filter);
@@ -388,7 +433,7 @@ export default function PredictionsPage() {
             </div>
 
             {/* Future Prediction Summary */}
-            <div className="rounded-xl border border-border p-4">
+            <div className="rounded-xl border border-border p-4 mb-6">
               <h3 className="text-lg font-semibold mb-3">30-Day Forecast Summary</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
@@ -406,6 +451,113 @@ export default function PredictionsPage() {
                   <p className="text-xl font-bold">{Math.round(selectedPrediction.confidence * 100)}%</p>
                 </div>
               </div>
+            </div>
+
+            {/* News Sentiment Section */}
+            {sentiment && (
+              <div className="rounded-xl border border-border p-4 mb-6">
+                <h3 className="text-lg font-semibold mb-3">News Sentiment Analysis</h3>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted mb-1">Overall Sentiment</p>
+                    <p className={`text-xl font-bold ${
+                      sentiment.sentiment_label === 'positive' ? 'text-accent' :
+                      sentiment.sentiment_label === 'negative' ? 'text-danger' : 'text-muted'
+                    }`}>
+                      {sentiment.sentiment_label.toUpperCase()}
+                    </p>
+                    <p className="text-xs text-muted mt-1">Score: {sentiment.sentiment_score.toFixed(2)}</p>
+                  </div>
+                  <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+                    <p className="text-xs text-muted mb-1">Positive News</p>
+                    <p className="text-2xl font-bold text-accent">{sentiment.positive_count}</p>
+                  </div>
+                  <div className="rounded-lg border border-danger/30 bg-danger/5 p-3">
+                    <p className="text-xs text-muted mb-1">Negative News</p>
+                    <p className="text-2xl font-bold text-danger">{sentiment.negative_count}</p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted mb-1">Neutral News</p>
+                    <p className="text-2xl font-bold">{sentiment.neutral_count}</p>
+                  </div>
+                </div>
+                
+                {/* Top Headlines from Sentiment */}
+                {sentiment.top_headlines && sentiment.top_headlines.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">Recent Headlines (Last 48 hours)</h4>
+                    <div className="space-y-2">
+                      {sentiment.top_headlines.map((headline: any, idx: number) => (
+                        <div key={idx} className="rounded-lg border border-border p-3 hover:bg-white/5 transition">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium flex-1">{headline.title}</p>
+                            <span className={`text-xs px-2 py-1 rounded-full ${
+                              headline.sentiment > 0.1 ? 'bg-accent/20 text-accent' :
+                              headline.sentiment < -0.1 ? 'bg-danger/20 text-danger' :
+                              'bg-border text-muted'
+                            }`}>
+                              {headline.sentiment > 0 ? '+' : ''}{headline.sentiment.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-muted">
+                            <span>{headline.source}</span>
+                            <span>•</span>
+                            <span>{new Date(headline.published_at).toLocaleDateString('en-IN')}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Latest News Section */}
+            <div className="rounded-xl border border-border p-4">
+              <h3 className="text-lg font-semibold mb-3">Latest News & Updates</h3>
+              {loadingNews ? (
+                <div className="flex items-center justify-center py-8">
+                  <p className="text-muted">Loading news...</p>
+                </div>
+              ) : stockNews.length > 0 ? (
+                <div className="space-y-3">
+                  {stockNews.slice(0, 10).map((article: any, idx: number) => (
+                    <a
+                      key={idx}
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block rounded-lg border border-border p-4 hover:bg-white/5 hover:border-accent/40 transition"
+                    >
+                      <div className="flex gap-4">
+                        {article.image && (
+                          <img
+                            src={article.image}
+                            alt=""
+                            className="w-24 h-24 object-cover rounded-lg flex-shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-sm mb-1 line-clamp-2">{article.title}</h4>
+                          {article.description && (
+                            <p className="text-xs text-muted line-clamp-2 mb-2">{article.description}</p>
+                          )}
+                          <div className="flex items-center gap-2 text-xs text-muted">
+                            <span>{article.source}</span>
+                            <span>•</span>
+                            <span>{new Date(article.published_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted">No recent news available for this stock</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -2,6 +2,18 @@
 
 Benx Quant Trading Platform is a full-stack stock prediction and automated trading platform for the Indian market built around the Upstox API. The stack combines a Next.js dark trading dashboard, a FastAPI backend, PostgreSQL, Redis, live websocket streaming, AI-driven signal generation, risk-managed execution, and historical backtesting.
 
+## Features
+
+- **Multi-Stock Intraday Scanner**: AI-powered stock selection from 30+ liquid NSE stocks
+- **Automated Trading**: Risk-managed execution with profit targets and stop-loss
+- **LSTM Predictions**: Deep learning model for BUY/SELL/HOLD signals
+- **Live Market Data**: Real-time websocket streaming from Upstox
+- **Historical Backtesting**: Test strategies on past data
+- **Portfolio Management**: Track positions, P&L, and trade history
+- **Dark Trading Dashboard**: Modern Next.js UI with real-time updates
+
+See [STOCK_SCANNER.md](STOCK_SCANNER.md) for details on the intelligent stock selection system.
+
 ## Architecture
 
 - `frontend/`: Next.js App Router dashboard with Tailwind CSS, shadcn-style UI primitives, Recharts, and Socket.IO.
@@ -76,6 +88,8 @@ npm run dev
 - `GET /api/v1/market/quotes`: Fetch live quotes from Upstox
 - `POST /api/v1/market/history/load`: Persist historical candles from Upstox
 - `GET /api/v1/predictions/signals`: Generate BUY/SELL/HOLD signals from the LSTM pipeline
+- `POST /api/v1/scanner/scan`: Scan stock universe and rank best intraday candidates
+- `GET /api/v1/scanner/latest`: Retrieve latest stock scanner results
 - `POST /api/v1/trading/auto-trading/toggle`: Enable or disable automated trading
 - `POST /api/v1/backtesting/run`: Execute historical backtests
 
