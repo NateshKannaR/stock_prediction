@@ -295,6 +295,9 @@ async def scalping_status(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
         "today_pnl": loop_status.get("today_pnl", 0),
         "loop": loop_status,
     }
+
+
+@router.post("/trading/auto-trading/toggle")
 async def toggle_auto_trading(payload: ToggleAutoTradingRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
     await db["auto_trading_state"].update_one(
