@@ -51,15 +51,21 @@ export default function IntradayPage() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  
+  const [scalpingEnabled, setScalpingEnabled] = useState(false);
+  const [scalpingInterval, setScalpingInterval] = useState("1minute");
+  const [scalpingStatus, setScalpingStatus] = useState<any>(null);
 
   useEffect(() => {
     loadData();
+    loadScalpingStatus();
   }, [selectedStock, selectedTimeframe]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       loadData();
+      loadScalpingStatus();
     }, 5000);
     return () => clearInterval(interval);
   }, [autoRefresh, selectedStock, selectedTimeframe]);
@@ -83,6 +89,40 @@ export default function IntradayPage() {
       console.error("Failed to load intraday data:", e);
     }
     setLoading(false);
+  }
+
+  async function loadScalpingStatus() {
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/trading/scalping/status');
+      const data = await res.json();
+      setScalpingStatus(data);
+      setScalpingEnabled(data.enabled);
+      setScalpingInterval(data.interval);
+    } catch (e) {
+      console.error("Failed to load scalping status:", e);
+    }
+  }
+
+  async function toggleScalpingBot() {
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/trading/scalping/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: !scalpingEnabled,
+          interval: scalpingInterval,
+          paper_trading: true,
+          daily_loss_limit: 2000,
+          max_capital_allocation: 50000,
+        }),
+      });
+      const data = await res.json();
+      setScalpingEnabled(data.enabled);
+      await loadScalpingStatus();
+      alert(data.enabled ? '✓ Scalping bot started!' : '✓ Scalping bot stopped!');
+    } catch (e: any) {
+      alert('✗ Failed: ' + (e.message || e));
+    }
   }
 
   async function loadHistoricalIntraday() {
@@ -132,9 +172,79 @@ export default function IntradayPage() {
     <div className="animate-fadeIn">
       <PageHeader 
         title="Intraday Trading" 
-        subtitle="Real-time intraday charts with multiple timeframes for day trading" 
+        subtitle="Real-time scalping bot with 1-minute auto-trading" 
       />
 
+      {/* Scalping Bot Panel */}
+      <Panel className="mb-6 border-accent/30 bg-accent/5">
+        <h3 className="text-lg font-semibold mb-4">⚡ Intraday Scalping Bot</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div>
+            <label className="block text-sm text-muted mb-2">Bot Status</label>
+            <div className="flex items-center gap-2">
+              <span className={`h-3 w-3 rounded-full ${scalpingEnabled ? 'bg-accent animate-pulse' : 'bg-border'}`} />
+              <span className="text-sm font-medium">{scalpingEnabled ? 'Running' : 'Stopped'}</span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm text-muted mb-2">Timeframe</label>
+            <select
+              value={scalpingInterval}
+              onChange={(e) => setScalpingInterval(e.target.value)}
+              disabled={scalpingEnabled}
+              className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
+            >
+              <option value="1minute">1 Minute (Ultra Fast)</option>
+              <option value="5minute">5 Minutes (Fast)</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={toggleScalpingBot}
+              className={`w-full rounded-xl px-6 py-3 font-semibold transition ${
+                scalpingEnabled
+                  ? 'bg-danger text-white hover:bg-danger/90'
+                  : 'bg-accent text-black hover:bg-accent/90'
+              }`}
+            >
+              {scalpingEnabled ? '⏸️ Stop Bot' : '▶️ Start Bot'}
+            </button>
+          </div>
+        </div>
+        
+        {scalpingStatus && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted">Today's Trades</p>
+              <p className="text-lg font-bold">{scalpingStatus.today_trades || 0}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted">Today's P&L</p>
+              <p className={`text-lg font-bold ${(scalpingStatus.today_pnl || 0) >= 0 ? 'text-accent' : 'text-danger'}`}>
+                ₹{(scalpingStatus.today_pnl || 0).toFixed(2)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted">Cycles</p>
+              <p className="text-lg font-bold">{scalpingStatus.loop?.cycles || 0}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted">Active Position</p>
+              <p className="text-lg font-bold">{scalpingStatus.loop?.active_position ? 'Yes' : 'No'}</p>
+            </div>
+          </div>
+        )}
+        
+        <div className="p-3 rounded-lg bg-border/30">
+          <p className="text-xs text-muted">
+            <strong>⚠️ How it works:</strong> Bot scans stocks every 10 seconds. When signal found, it BUYS/SELLS. 
+            After {scalpingInterval === '1minute' ? '1 minute' : '5 minutes'}, it automatically EXITS (profit or loss). 
+            Repeats continuously during market hours.
+          </p>
+        </div>
+      </Panel>
+
+      {/* Chart Controls */}
       <Panel className="mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -177,7 +287,7 @@ export default function IntradayPage() {
               disabled={loading}
               className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-muted hover:text-text hover:border-accent transition disabled:opacity-40"
             >
-              {loading ? '⏳ Loading...' : '📥 Load Today\'s Data'}
+              {loading ? '⏳ Loading...' : '📥 Load Data'}
             </button>
             <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
               <input
@@ -192,7 +302,8 @@ export default function IntradayPage() {
         </div>
       </Panel>
 
-      <Panel className={`mb-6 card-hover ${isPositive ? 'border-accent/30 bg-accent/5' : 'border-danger/30 bg-danger/5'}`}>
+      {/* Price Display */}
+      <Panel className={`mb-6 ${isPositive ? 'border-accent/30 bg-accent/5' : 'border-danger/30 bg-danger/5'}`}>
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-3xl font-bold">{stockName}</h2>
@@ -207,6 +318,7 @@ export default function IntradayPage() {
         </div>
       </Panel>
 
+      {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Panel className="text-center">
           <p className="text-xs text-muted mb-1">Open</p>
@@ -230,6 +342,7 @@ export default function IntradayPage() {
         </Panel>
       </div>
 
+      {/* Chart */}
       {candles.length > 0 ? (
         <Panel className="mb-6">
           <h3 className="text-lg font-semibold mb-4">
@@ -238,34 +351,11 @@ export default function IntradayPage() {
           <ResponsiveContainer width="100%" height={400}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis 
-                dataKey="time" 
-                stroke="#888" 
-                style={{ fontSize: '12px' }}
-              />
-              <YAxis 
-                stroke="#888" 
-                style={{ fontSize: '12px' }}
-                domain={['auto', 'auto']}
-                tickFormatter={(value) => `₹${value.toFixed(0)}`}
-              />
-              <Tooltip
-                contentStyle={{ 
-                  backgroundColor: '#1a1a1a', 
-                  border: '1px solid #333', 
-                  borderRadius: '8px' 
-                }}
-                formatter={(value: any) => [`₹${value.toFixed(2)}`, 'Price']}
-              />
+              <XAxis dataKey="time" stroke="#888" style={{ fontSize: '12px' }} />
+              <YAxis stroke="#888" style={{ fontSize: '12px' }} domain={['auto', 'auto']} tickFormatter={(value) => `₹${value.toFixed(0)}`} />
+              <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px' }} formatter={(value: any) => [`₹${value.toFixed(2)}`, 'Price']} />
               <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="price" 
-                stroke="#10b981" 
-                strokeWidth={2}
-                dot={false}
-                name="Price"
-              />
+              <Line type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} dot={false} name="Price" />
             </LineChart>
           </ResponsiveContainer>
         </Panel>
@@ -274,62 +364,10 @@ export default function IntradayPage() {
           <div className="text-center py-12">
             <div className="text-6xl mb-4">📊</div>
             <h3 className="text-xl font-semibold mb-2">No Intraday Data</h3>
-            <p className="text-sm text-muted mb-6">
-              Click "Load Today's Data" to fetch intraday candles from Upstox
-            </p>
+            <p className="text-sm text-muted mb-6">Click "Load Data" to fetch intraday candles</p>
           </div>
         </Panel>
       )}
-
-      {candles.length > 0 && (
-        <Panel>
-          <h3 className="text-lg font-semibold mb-4">Volume Analysis</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis dataKey="time" stroke="#888" style={{ fontSize: '12px' }} />
-              <YAxis stroke="#888" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{ 
-                  backgroundColor: '#1a1a1a', 
-                  border: '1px solid #333', 
-                  borderRadius: '8px' 
-                }}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="volume" 
-                stroke="#3b82f6" 
-                strokeWidth={2}
-                dot={false}
-                name="Volume"
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <div className="text-center">
-              <p className="text-xs text-muted">Avg Volume</p>
-              <p className="text-lg font-semibold">{(avgVolume / 1000).toFixed(0)}K</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs text-muted">Total Volume</p>
-              <p className="text-lg font-semibold">{(totalVolume / 1000000).toFixed(2)}M</p>
-            </div>
-          </div>
-        </Panel>
-      )}
-
-      <Panel className="mt-6 border-yellow-400/30 bg-yellow-400/5">
-        <h3 className="text-lg font-semibold mb-3 text-yellow-400">💡 Intraday Trading Tips</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-muted">
-          <div>• Best time: 9:30 AM - 11:00 AM (high volatility)</div>
-          <div>• Avoid: 12:00 PM - 1:00 PM (low liquidity)</div>
-          <div>• Use stop-loss on every trade</div>
-          <div>• Don't hold positions overnight</div>
-          <div>• Follow the trend, don't fight it</div>
-          <div>• Book profits at resistance levels</div>
-        </div>
-      </Panel>
     </div>
   );
 }

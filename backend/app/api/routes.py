@@ -236,7 +236,65 @@ async def list_strategies(db: AsyncIOMotorDatabase = Depends(get_db)) -> list[di
     ]
 
 
-@router.post("/trading/auto-trading/toggle")
+@router.post("/trading/scalping/toggle")
+async def toggle_scalping(payload: dict, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    user = await get_default_user(db)
+    enabled = payload.get("enabled", False)
+    interval = payload.get("interval", "1minute")  # 1minute or 5minute
+    
+    await db["intraday_scalping_state"].update_one(
+        {"user_id": _user_id(user)},
+        {"$set": {
+            "enabled": enabled,
+            "scalping_interval": interval,
+            "paper_trading": payload.get("paper_trading", True),
+            "daily_loss_limit": float(payload.get("daily_loss_limit", 2000)),
+            "max_capital_allocation": float(payload.get("max_capital_allocation", 50000)),
+            "updated_at": datetime.utcnow(),
+        }},
+        upsert=True,
+    )
+    
+    if enabled:
+        from app.services.intraday_scalper import start_scalping_bot
+        start_scalping_bot(interval_seconds=10)
+    else:
+        from app.services.intraday_scalper import stop_scalping_bot
+        stop_scalping_bot()
+    
+    return {"enabled": enabled, "interval": interval}
+
+
+@router.get("/trading/scalping/status")
+async def scalping_status(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    user = await get_default_user(db)
+    state = await db["intraday_scalping_state"].find_one({"user_id": _user_id(user)})
+    
+    from app.services.intraday_scalper import get_scalping_status
+    loop_status = get_scalping_status()
+    
+    if state is None:
+        return {
+            "enabled": False,
+            "interval": "1minute",
+            "paper_trading": True,
+            "daily_loss_limit": 2000,
+            "max_capital_allocation": 50000,
+            "today_trades": 0,
+            "today_pnl": 0,
+            "loop": loop_status,
+        }
+    
+    return {
+        "enabled": state["enabled"],
+        "interval": state.get("scalping_interval", "1minute"),
+        "paper_trading": state["paper_trading"],
+        "daily_loss_limit": float(state["daily_loss_limit"]),
+        "max_capital_allocation": float(state["max_capital_allocation"]),
+        "today_trades": loop_status.get("today_trades", 0),
+        "today_pnl": loop_status.get("today_pnl", 0),
+        "loop": loop_status,
+    }
 async def toggle_auto_trading(payload: ToggleAutoTradingRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
     await db["auto_trading_state"].update_one(
