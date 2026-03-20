@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PageHeader, Panel } from "@/components/ui";
 import { api } from "@/lib/api";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from "recharts";
 
 const LABELS: Record<string, string> = {
   "NSE_EQ|INE002A01018": "RELIANCE",
@@ -151,6 +152,10 @@ export default function PredictionsPage() {
   const [training, setTraining] = useState(false);
   const [trainResult, setTrainResult] = useState<any>(null);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL" | "HOLD">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStock, setSelectedStock] = useState<string | null>(null);
+  const [historicalData, setHistoricalData] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -175,14 +180,80 @@ export default function PredictionsPage() {
 
   useEffect(() => { load(); }, []);
 
+  async function loadHistoricalData(instrumentKey: string) {
+    setLoadingHistory(true);
+    try {
+      const toDate = new Date().toISOString().split('T')[0];
+      const fromDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const res = await fetch(`http://localhost:8000/api/v1/market/history/${instrumentKey}?interval=day&from_date=${fromDate}&to_date=${toDate}`);
+      const data = await res.json();
+      
+      const chartData = data.candles.map((c: any) => ({
+        date: new Date(c.timestamp).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+        price: c.close,
+        high: c.high,
+        low: c.low,
+      }));
+      
+      // Add future predictions (simple projection based on trend)
+      const prediction = predictions.find(p => p.instrument_key === instrumentKey);
+      if (prediction && chartData.length > 0) {
+        const lastPrice = chartData[chartData.length - 1].price;
+        const targetPrice = prediction.target_price;
+        const days = 30;
+        const dailyChange = (targetPrice - lastPrice) / days;
+        
+        for (let i = 1; i <= days; i++) {
+          const futureDate = new Date(Date.now() + i * 24 * 60 * 60 * 1000);
+          chartData.push({
+            date: futureDate.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+            price: null,
+            predicted: lastPrice + (dailyChange * i),
+            high: null,
+            low: null,
+          });
+        }
+      }
+      
+      setHistoricalData(chartData);
+    } catch (e) {
+      console.error("Failed to load history:", e);
+    }
+    setLoadingHistory(false);
+  }
+
+  function handleStockSelect(instrumentKey: string) {
+    setSelectedStock(instrumentKey);
+    loadHistoricalData(instrumentKey);
+  }
+
   const filtered = filter === "ALL" ? predictions : predictions.filter((p) => p.signal === filter);
+  const searchFiltered = searchQuery
+    ? filtered.filter(p => 
+        LABELS[p.instrument_key]?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.instrument_key.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : filtered;
   const buys = predictions.filter((p) => p.signal === "BUY").length;
   const sells = predictions.filter((p) => p.signal === "SELL").length;
   const holds = predictions.filter((p) => p.signal === "HOLD").length;
+  
+  const selectedPrediction = selectedStock ? predictions.find(p => p.instrument_key === selectedStock) : null;
 
   return (
     <div>
       <PageHeader title="AI Predictions" subtitle="Indicator-based signal analysis for all tracked NSE stocks. Auto-loads historical data if not yet stored." />
+
+      {/* Search Bar */}
+      <div className="mb-4">
+        <input
+          type="text"
+          placeholder="🔍 Search stock by name or symbol..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-xl border border-border bg-panel px-4 py-3 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none"
+        />
+      </div>
 
       {/* Action bar — always visible */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -229,15 +300,114 @@ export default function PredictionsPage() {
             <Panel key={i} className="h-64 animate-pulse bg-panel/50" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : searchFiltered.length === 0 ? (
         <Panel>
           <p className="text-sm text-muted">
-            {predictions.length === 0 ? "No predictions available. Click ↻ Refresh to load." : `No ${filter} signals right now.`}
+            {predictions.length === 0 ? "No predictions available. Click ↻ Refresh to load." : `No ${filter} signals matching "${searchQuery}".`}
           </p>
         </Panel>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((p) => <PredictionCard key={p.instrument_key} p={p} />)}
+          {searchFiltered.map((p) => (
+            <div key={p.instrument_key} onClick={() => handleStockSelect(p.instrument_key)} className="cursor-pointer">
+              <PredictionCard p={p} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Stock Detail Modal with Chart */}
+      {selectedStock && selectedPrediction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setSelectedStock(null)}>
+          <div className="w-full max-w-6xl max-h-[90vh] overflow-y-auto rounded-2xl border border-border bg-panel p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <h2 className="text-3xl font-bold">{LABELS[selectedStock] ?? selectedStock}</h2>
+                <p className="text-sm text-muted mt-1">{selectedStock}</p>
+              </div>
+              <button onClick={() => setSelectedStock(null)} className="text-2xl text-muted hover:text-text">×</button>
+            </div>
+
+            {/* Price and Signal Info */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="rounded-xl border border-border p-4">
+                <p className="text-xs text-muted mb-1">Current Price</p>
+                <p className="text-2xl font-bold">₹{selectedPrediction.last_close.toFixed(2)}</p>
+              </div>
+              <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+                <p className="text-xs text-muted mb-1">Target Price</p>
+                <p className="text-2xl font-bold text-accent">₹{selectedPrediction.target_price.toFixed(2)}</p>
+              </div>
+              <div className="rounded-xl border border-danger/30 bg-danger/5 p-4">
+                <p className="text-xs text-muted mb-1">Stop Loss</p>
+                <p className="text-2xl font-bold text-danger">₹{selectedPrediction.stop_loss.toFixed(2)}</p>
+              </div>
+              <div className="rounded-xl border border-border p-4">
+                <p className="text-xs text-muted mb-1">Signal</p>
+                <SignalBadge signal={selectedPrediction.signal} />
+              </div>
+            </div>
+
+            {/* Historical + Future Prediction Chart */}
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold mb-4">Price History & 30-Day Prediction</h3>
+              {loadingHistory ? (
+                <div className="h-96 flex items-center justify-center border border-border rounded-xl">
+                  <p className="text-muted">Loading chart...</p>
+                </div>
+              ) : historicalData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={400}>
+                  <AreaChart data={historicalData}>
+                    <defs>
+                      <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorPredicted" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                    <XAxis dataKey="date" stroke="#888" style={{ fontSize: '12px' }} />
+                    <YAxis stroke="#888" style={{ fontSize: '12px' }} domain={['auto', 'auto']} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px' }}
+                      labelStyle={{ color: '#888' }}
+                    />
+                    <Legend />
+                    <Area type="monotone" dataKey="price" stroke="#10b981" fill="url(#colorPrice)" name="Actual Price" strokeWidth={2} />
+                    <Area type="monotone" dataKey="predicted" stroke="#3b82f6" fill="url(#colorPredicted)" name="Predicted Price" strokeWidth={2} strokeDasharray="5 5" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-96 flex items-center justify-center border border-border rounded-xl">
+                  <p className="text-muted">No historical data available</p>
+                </div>
+              )}
+            </div>
+
+            {/* Future Prediction Summary */}
+            <div className="rounded-xl border border-border p-4">
+              <h3 className="text-lg font-semibold mb-3">30-Day Forecast Summary</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-muted">Expected Price (30 days)</p>
+                  <p className="text-xl font-bold text-accent">₹{selectedPrediction.target_price.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted">Potential Gain/Loss</p>
+                  <p className={`text-xl font-bold ${selectedPrediction.target_price > selectedPrediction.last_close ? 'text-accent' : 'text-danger'}`}>
+                    {((selectedPrediction.target_price - selectedPrediction.last_close) / selectedPrediction.last_close * 100).toFixed(2)}%
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted">Confidence Level</p>
+                  <p className="text-xl font-bold">{Math.round(selectedPrediction.confidence * 100)}%</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
