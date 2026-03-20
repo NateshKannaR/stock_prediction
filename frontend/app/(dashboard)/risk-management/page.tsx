@@ -56,11 +56,13 @@ export default function RiskManagementPage() {
         paper_trading: status?.paper_trading || true,
         daily_loss_limit: dailyLossLimit,
         max_capital_allocation: maxCapital,
+        profit_target_pct: profitTarget,
+        stop_loss_pct: stopLoss,
       });
       await loadStatus();
-      alert("Risk settings saved successfully!");
+      alert("✓ Risk settings saved successfully!");
     } catch (e: any) {
-      alert("Failed to save settings: " + (e.message || e));
+      alert("✗ Failed to save settings: " + (e.message || e));
     }
     setSaving(false);
   }

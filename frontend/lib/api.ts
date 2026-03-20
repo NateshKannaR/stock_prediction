@@ -51,7 +51,7 @@ export const api = {
   tradeHistory: () => apiFetch<Array<{ id: number; strategy_name: string; instrument_key: string; side: string; quantity: number; price: number; status: string; created_at: string }>>("/trades/history"),
   strategies: () => apiFetch<Array<Record<string, unknown>>>("/strategies"),
   listStrategies: () => apiFetch<Array<{ id: string; name: string; instruments: string[]; indicators: any; entry_rules: any; exit_rules: any; risk_params: any; is_active: boolean }>>("/strategies"),
-  autoTradingStatus: () => apiFetch<{ enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number; today_trades: number; today_pnl: number; loop: { running: boolean; last_cycle: string | null; last_error: string | null; cycles: number } }>("/trading/auto-trading/status"),
+  autoTradingStatus: () => apiFetch<{ enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number; profit_target_pct: number; stop_loss_pct: number; today_trades: number; today_pnl: number; loop: { running: boolean; last_cycle: string | null; last_error: string | null; cycles: number } }>("/trading/auto-trading/status"),
   marketQuotes: (instrumentKeys: string[]) =>
     apiFetch<{ status?: string; data?: Record<string, MarketQuoteRow> }>("/market/quotes", {
       method: "POST",
@@ -78,7 +78,7 @@ export const api = {
   predictions: (instrumentKeys?: string, interval = "day") => apiFetch<Array<{ instrument_key: string; signal: "BUY" | "SELL" | "HOLD"; confidence: number; last_close: number; change: number; change_pct: number; target_price: number; stop_loss: number; support: number; resistance: number; source: string; features: Record<string, number | string>; generated_at: string }>>(`/predictions/signals${instrumentKeys ? `?instrument_keys=${encodeURIComponent(instrumentKeys)}&interval=${interval}` : ""}`),
   runBacktest: (payload: { instrument_key: string; interval: string; starting_capital: number; strategy_id: number }) =>
     apiFetch<Record<string, unknown>>("/backtesting/run", { method: "POST", body: JSON.stringify(payload) }),
-  toggleAutoTrading: (payload: { enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number }) =>
+  toggleAutoTrading: (payload: { enabled: boolean; paper_trading: boolean; daily_loss_limit: number; max_capital_allocation: number; profit_target_pct?: number; stop_loss_pct?: number }) =>
     apiFetch<Record<string, unknown>>("/trading/auto-trading/toggle", { method: "POST", body: JSON.stringify(payload) }),
   createStrategy: (payload: Record<string, unknown>) =>
     apiFetch<{ id: string }>("/strategies", { method: "POST", body: JSON.stringify(payload) }),
