@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: benx-quant-backend
+Version: 0.1.0
+Summary: FastAPI backend for Benx Quant Trading Platform
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.34.0
+Requires-Dist: dnspython>=2.7.0
+Requires-Dist: motor>=3.7.0
+Requires-Dist: pydantic-settings>=2.7.1
+Requires-Dist: python-jose[cryptography]>=3.3.0
+Requires-Dist: passlib[bcrypt]>=1.7.4
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: redis>=5.2.1
+Requires-Dist: python-socketio>=5.12.1
+Requires-Dist: email-validator>=2.2.0
+Requires-Dist: joblib>=1.4.2
+Requires-Dist: pandas>=2.2.3
+Requires-Dist: numpy>=2.2.3
+Requires-Dist: scikit-learn>=1.6.1
+Requires-Dist: torch>=2.6.0
+Requires-Dist: ta>=0.11.0
+Requires-Dist: orjson>=3.10.15
+Requires-Dist: python-multipart>=0.0.20
+Requires-Dist: websockets>=15.0
