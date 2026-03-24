@@ -26,6 +26,15 @@ _status: dict = {
     "today_pnl": 0.0,
     "today_trades": 0,
     "log": [],                 # last 20 log lines shown in UI
+    "win_rate": 0.0,
+    "total_wins": 0,
+    "total_losses": 0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "max_drawdown": 0.0,
+    "sharpe_ratio": 0.0,
+    "trailing_stop_active": False,
+    "trailing_stop_price": 0.0,
 }
 
 from app.models.watchlist import INTRADAY_UNIVERSE
@@ -197,24 +206,78 @@ async def _place_order(upstox: UpstoxService, credential: Any, instrument_key: s
     return resp
 
 
+async def _calculate_performance_metrics(db, user_id: str) -> None:
+    """Calculate and update performance metrics."""
+    trades = await db["trades"].find({"user_id": user_id, "pnl": {"$ne": None}}).to_list(length=10000)
+    if not trades:
+        return
+    
+    wins = [float(t["pnl"]) for t in trades if float(t.get("pnl", 0)) > 0]
+    losses = [float(t["pnl"]) for t in trades if float(t.get("pnl", 0)) < 0]
+    
+    _status["total_wins"] = len(wins)
+    _status["total_losses"] = len(losses)
+    _status["win_rate"] = round(len(wins) / len(trades) * 100, 2) if trades else 0.0
+    _status["avg_win"] = round(sum(wins) / len(wins), 2) if wins else 0.0
+    _status["avg_loss"] = round(sum(losses) / len(losses), 2) if losses else 0.0
+    
+    # Calculate max drawdown
+    cumulative_pnl = []
+    running_total = 0
+    for t in sorted(trades, key=lambda x: x["created_at"]):
+        running_total += float(t.get("pnl", 0))
+        cumulative_pnl.append(running_total)
+    
+    if cumulative_pnl:
+        peak = cumulative_pnl[0]
+        max_dd = 0
+        for val in cumulative_pnl:
+            if val > peak:
+                peak = val
+            dd = peak - val
+            if dd > max_dd:
+                max_dd = dd
+        _status["max_drawdown"] = round(max_dd, 2)
+    
+    # Calculate Sharpe ratio (simplified)
+    if len(trades) > 1:
+        returns = [float(t.get("pnl", 0)) for t in trades]
+        avg_return = sum(returns) / len(returns)
+        std_return = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
+        _status["sharpe_ratio"] = round(avg_return / std_return if std_return > 0 else 0, 2)
+
+
 async def _run_cycle(db, state: dict) -> None:
     user_id = state["user_id"]
     capital = float(state.get("max_capital_allocation", 50000))
     daily_loss_limit = float(state.get("daily_loss_limit", 2000))
     paper_trading = bool(state.get("paper_trading", True))
-    profit_target_pct = float(state.get("profit_target_pct", 1.0))   # default 1%
-    stop_loss_pct = float(state.get("stop_loss_pct", 0.5))            # default 0.5%
+    profit_target_pct = float(state.get("profit_target_pct", 1.5))   # default 1.5%
+    stop_loss_pct = float(state.get("stop_loss_pct", 0.75))          # default 0.75%
+    trailing_stop_enabled = bool(state.get("trailing_stop_enabled", True))
+    trailing_stop_pct = float(state.get("trailing_stop_pct", 0.5))  # default 0.5%
+    max_positions = int(state.get("max_positions", 3))               # default 3 concurrent positions
+    risk_per_trade_pct = float(state.get("risk_per_trade_pct", 2.0)) # default 2% of capital per trade
 
     upstox = UpstoxService(db)
     credential = await upstox.get_credential(user_id)
     alerts = AlertService()
 
+    # --- Calculate performance metrics ---
+    await _calculate_performance_metrics(db, user_id)
+    
     # --- Check daily loss limit ---
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     today_trades = await db["trades"].find({"user_id": user_id, "created_at": {"$gte": today}}).to_list(length=10000)
     today_pnl = sum(float(t.get("pnl") or 0) for t in today_trades)
     _status["today_pnl"] = today_pnl
     _status["today_trades"] = len(today_trades)
+    
+    # Check max trades per day limit
+    max_trades_per_day = int(state.get("max_trades_per_day", 10))
+    if len(today_trades) >= max_trades_per_day:
+        _log(f"Max trades per day ({max_trades_per_day}) reached. Waiting for next day.")
+        return
 
     if daily_loss_limit > 0 and today_pnl <= -daily_loss_limit:
         _log(f"Daily loss limit ₹{daily_loss_limit} hit (P&L: ₹{today_pnl:.2f}). Stopping.")
@@ -223,9 +286,10 @@ async def _run_cycle(db, state: dict) -> None:
         stop_auto_trader()
         return
 
-    # --- Check existing open position: manage it ---
-    open_pos = await db["positions"].find_one({"user_id": user_id, "quantity": {"$ne": 0}})
-    if open_pos:
+    # --- Check existing open positions: manage them ---
+    open_positions = await db["positions"].find({"user_id": user_id, "quantity": {"$ne": 0}}).to_list(length=100)
+    
+    for open_pos in open_positions:
         instrument_key = open_pos["instrument_key"]
         entry_price = float(open_pos.get("average_price", 0))
         qty = int(open_pos.get("quantity", 0))
@@ -241,20 +305,55 @@ async def _run_cycle(db, state: dict) -> None:
             label = LABEL.get(instrument_key, instrument_key)
 
             _log(f"Monitoring {label} | Entry ₹{entry_price:.2f} | Now ₹{current_price:.2f} | P&L ₹{pnl_abs:.2f} ({pnl_pct:.2f}%)")
-            _status["active_position"] = {
-                "instrument": label, "entry": entry_price,
-                "current": current_price, "qty": qty,
-                "pnl": round(pnl_abs, 2), "pnl_pct": round(pnl_pct, 2),
-            }
+            
+            # Update active position status (for first position)
+            if not _status["active_position"]:
+                _status["active_position"] = {
+                    "instrument": label, "entry": entry_price,
+                    "current": current_price, "qty": qty,
+                    "pnl": round(pnl_abs, 2), "pnl_pct": round(pnl_pct, 2),
+                }
 
             should_exit = False
             exit_reason = ""
-            if pnl_pct >= profit_target_pct:
-                should_exit = True
-                exit_reason = f"Profit target {profit_target_pct}% hit"
-            elif pnl_pct <= -stop_loss_pct:
-                should_exit = True
-                exit_reason = f"Stop-loss {stop_loss_pct}% hit"
+            
+            # Trailing stop logic
+            if trailing_stop_enabled and pnl_pct > 0:
+                position_key = f"{user_id}_{instrument_key}"
+                trailing_stop_price = _status.get(f"trailing_stop_{position_key}", 0)
+                
+                # Initialize or update trailing stop
+                if qty > 0:  # Long position
+                    new_trailing_stop = current_price * (1 - trailing_stop_pct / 100)
+                    if new_trailing_stop > trailing_stop_price:
+                        _status[f"trailing_stop_{position_key}"] = new_trailing_stop
+                        trailing_stop_price = new_trailing_stop
+                        _log(f"Trailing stop updated for {label}: ₹{trailing_stop_price:.2f}")
+                    
+                    if current_price <= trailing_stop_price and trailing_stop_price > 0:
+                        should_exit = True
+                        exit_reason = f"Trailing stop triggered at ₹{trailing_stop_price:.2f}"
+                        _status["trailing_stop_active"] = True
+                else:  # Short position
+                    new_trailing_stop = current_price * (1 + trailing_stop_pct / 100)
+                    if trailing_stop_price == 0 or new_trailing_stop < trailing_stop_price:
+                        _status[f"trailing_stop_{position_key}"] = new_trailing_stop
+                        trailing_stop_price = new_trailing_stop
+                        _log(f"Trailing stop updated for {label}: ₹{trailing_stop_price:.2f}")
+                    
+                    if current_price >= trailing_stop_price and trailing_stop_price > 0:
+                        should_exit = True
+                        exit_reason = f"Trailing stop triggered at ₹{trailing_stop_price:.2f}"
+                        _status["trailing_stop_active"] = True
+            
+            # Standard profit target and stop loss
+            if not should_exit:
+                if pnl_pct >= profit_target_pct:
+                    should_exit = True
+                    exit_reason = f"Profit target {profit_target_pct}% hit"
+                elif pnl_pct <= -stop_loss_pct:
+                    should_exit = True
+                    exit_reason = f"Stop-loss {stop_loss_pct}% hit"
 
             if should_exit:
                 exit_side = "SELL" if qty > 0 else "BUY"
@@ -273,17 +372,29 @@ async def _run_cycle(db, state: dict) -> None:
                         {"user_id": user_id, "instrument_key": instrument_key},
                         {"$set": {"quantity": 0, "last_price": current_price, "updated_at": datetime.now(timezone.utc)}},
                     )
-                    _status["active_position"] = None
+                    # Clear trailing stop for this position
+                    position_key = f"{user_id}_{instrument_key}"
+                    _status.pop(f"trailing_stop_{position_key}", None)
+                    _status["trailing_stop_active"] = False
+                    
+                    if not open_positions or instrument_key == open_positions[0]["instrument_key"]:
+                        _status["active_position"] = None
+                    
                     _log(f"EXIT {label} @ ₹{current_price:.2f} | {exit_reason} | P&L ₹{pnl_abs:.2f}")
                     alerts.publish("trade.executed", {"instrument_key": instrument_key, "side": exit_side,
                                                        "pnl": pnl_abs, "reason": exit_reason})
                 except Exception as exc:
                     _log(f"Exit order failed for {label}: {exc}")
-            return  # don't open new position while one is active
+    
+    # Check if we can open new positions
+    if len(open_positions) >= max_positions:
+        _log(f"Max positions ({max_positions}) reached. Managing existing positions only.")
+        return
 
-    # --- No open position: scan universe for best stocks ---
-    _status["active_position"] = None
-    _log("Scanning stock universe for best opportunities...")
+    # --- Scan universe for best stocks ---
+    if not open_positions:
+        _status["active_position"] = None
+    _log(f"Scanning stock universe for best opportunities... ({len(open_positions)}/{max_positions} positions)")
 
     # Use stock scanner to get top 5 stocks
     scanner = StockScannerService(db)
@@ -316,9 +427,18 @@ async def _run_cycle(db, state: dict) -> None:
             instrument_key, signal, last_price, score = chosen
             label = LABEL.get(instrument_key, instrument_key.split("|")[-1])
             
-            # Position size
+            # Advanced position sizing based on risk
+            # Risk per trade = capital * risk_per_trade_pct / 100
+            # Position size = risk_amount / (entry_price * stop_loss_pct / 100)
+            risk_amount = capital * (risk_per_trade_pct / 100)
+            stop_distance = last_price * (stop_loss_pct / 100)
+            quantity = max(int(risk_amount / stop_distance), 1)
+            
+            # Cap at 20% of capital per position
             max_per_trade = capital * 0.2
-            quantity = max(int(max_per_trade / last_price), 1)
+            max_qty = int(max_per_trade / last_price)
+            quantity = min(quantity, max_qty)
+            
             cost = quantity * last_price
             
             _log(f"BEST: {label} | Score: {score:.2f} | Signal: {signal} | ₹{last_price:.2f} x {quantity} = ₹{cost:.2f}")
@@ -383,9 +503,16 @@ async def _run_cycle(db, state: dict) -> None:
     instrument_key, signal, last_price = chosen
     label = LABEL.get(instrument_key, instrument_key)
 
-    # Position size: use up to capital, max 20% per trade, min 1 share
+    # Advanced position sizing based on risk
+    risk_amount = capital * (risk_per_trade_pct / 100)
+    stop_distance = last_price * (stop_loss_pct / 100)
+    quantity = max(int(risk_amount / stop_distance), 1)
+    
+    # Cap at 20% of capital per position
     max_per_trade = capital * 0.2
-    quantity = max(int(max_per_trade / last_price), 1)
+    max_qty = int(max_per_trade / last_price)
+    quantity = min(quantity, max_qty)
+    
     cost = quantity * last_price
 
     _log(f"BEST: {label} | Score: {scores[0][1]:.1f} | Signal: {signal} | ₹{last_price:.2f} x {quantity} = ₹{cost:.2f}")

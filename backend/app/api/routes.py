@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import pandas as pd
@@ -428,6 +428,14 @@ async def scalping_status(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
 @router.post("/trading/auto-trading/toggle")
 async def toggle_auto_trading(payload: ToggleAutoTradingRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
+    
+    # Extract additional parameters with defaults
+    trailing_stop_enabled = payload.dict().get("trailing_stop_enabled", True)
+    trailing_stop_pct = payload.dict().get("trailing_stop_pct", 0.5)
+    max_positions = payload.dict().get("max_positions", 3)
+    risk_per_trade_pct = payload.dict().get("risk_per_trade_pct", 2.0)
+    max_trades_per_day = payload.dict().get("max_trades_per_day", 10)
+    
     await db["auto_trading_state"].update_one(
         {"user_id": _user_id(user)},
         {"$set": {
@@ -437,6 +445,11 @@ async def toggle_auto_trading(payload: ToggleAutoTradingRequest, db: AsyncIOMoto
             "max_capital_allocation": float(payload.max_capital_allocation),
             "profit_target_pct": payload.profit_target_pct,
             "stop_loss_pct": payload.stop_loss_pct,
+            "trailing_stop_enabled": trailing_stop_enabled,
+            "trailing_stop_pct": trailing_stop_pct,
+            "max_positions": max_positions,
+            "risk_per_trade_pct": risk_per_trade_pct,
+            "max_trades_per_day": max_trades_per_day,
             "updated_at": datetime.utcnow(),
         }},
         upsert=True,
@@ -445,7 +458,12 @@ async def toggle_auto_trading(payload: ToggleAutoTradingRequest, db: AsyncIOMoto
         start_auto_trader(interval_seconds=60)
     else:
         stop_auto_trader()
-    return {"enabled": payload.enabled, "paper_trading": payload.paper_trading}
+    return {
+        "enabled": payload.enabled,
+        "paper_trading": payload.paper_trading,
+        "trailing_stop_enabled": trailing_stop_enabled,
+        "max_positions": max_positions,
+    }
 
 
 @router.get("/trading/auto-trading/status")
@@ -456,14 +474,139 @@ async def auto_trading_status(db: AsyncIOMotorDatabase = Depends(get_db)) -> dic
     today_trades = await db["trades"].find({"user_id": _user_id(user), "created_at": {"$gte": today}}).to_list(length=10000)
     today_pnl = sum(float(t.get("pnl") or 0) for t in today_trades)
     loop = get_status()
+    
     if state is None:
-        return {"enabled": False, "paper_trading": True, "daily_loss_limit": 0, "max_capital_allocation": 0,
-                "profit_target_pct": 1.0, "stop_loss_pct": 0.5,
-                "today_trades": len(today_trades), "today_pnl": today_pnl, "loop": loop}
-    return {"enabled": state["enabled"], "paper_trading": state["paper_trading"],
-            "daily_loss_limit": float(state["daily_loss_limit"]), "max_capital_allocation": float(state["max_capital_allocation"]),
-            "profit_target_pct": float(state.get("profit_target_pct", 1.0)), "stop_loss_pct": float(state.get("stop_loss_pct", 0.5)),
-            "today_trades": len(today_trades), "today_pnl": today_pnl, "loop": loop}
+        return {
+            "enabled": False,
+            "paper_trading": True,
+            "daily_loss_limit": 0,
+            "max_capital_allocation": 0,
+            "profit_target_pct": 1.5,
+            "stop_loss_pct": 0.75,
+            "trailing_stop_enabled": True,
+            "trailing_stop_pct": 0.5,
+            "max_positions": 3,
+            "risk_per_trade_pct": 2.0,
+            "max_trades_per_day": 10,
+            "today_trades": len(today_trades),
+            "today_pnl": today_pnl,
+            "loop": loop,
+        }
+    
+    return {
+        "enabled": state["enabled"],
+        "paper_trading": state["paper_trading"],
+        "daily_loss_limit": float(state["daily_loss_limit"]),
+        "max_capital_allocation": float(state["max_capital_allocation"]),
+        "profit_target_pct": float(state.get("profit_target_pct", 1.5)),
+        "stop_loss_pct": float(state.get("stop_loss_pct", 0.75)),
+        "trailing_stop_enabled": state.get("trailing_stop_enabled", True),
+        "trailing_stop_pct": float(state.get("trailing_stop_pct", 0.5)),
+        "max_positions": int(state.get("max_positions", 3)),
+        "risk_per_trade_pct": float(state.get("risk_per_trade_pct", 2.0)),
+        "max_trades_per_day": int(state.get("max_trades_per_day", 10)),
+        "today_trades": len(today_trades),
+        "today_pnl": today_pnl,
+        "loop": loop,
+    }
+
+
+@router.get("/trading/auto-trading/performance")
+async def auto_trading_performance(days: int = 30, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Get detailed performance analytics for auto trading."""
+    user = await get_default_user(db)
+    from_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
+    
+    trades = await db["trades"].find({
+        "user_id": _user_id(user),
+        "created_at": {"$gte": from_date},
+        "pnl": {"$ne": None}
+    }).to_list(length=10000)
+    
+    if not trades:
+        return {
+            "total_trades": 0,
+            "win_rate": 0,
+            "total_pnl": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "max_win": 0,
+            "max_loss": 0,
+            "profit_factor": 0,
+            "sharpe_ratio": 0,
+            "max_drawdown": 0,
+            "daily_pnl": [],
+        }
+    
+    wins = [float(t["pnl"]) for t in trades if float(t.get("pnl", 0)) > 0]
+    losses = [float(t["pnl"]) for t in trades if float(t.get("pnl", 0)) < 0]
+    
+    total_pnl = sum(float(t.get("pnl", 0)) for t in trades)
+    win_rate = len(wins) / len(trades) * 100 if trades else 0
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = sum(losses) / len(losses) if losses else 0
+    max_win = max(wins) if wins else 0
+    max_loss = min(losses) if losses else 0
+    
+    # Profit factor
+    total_wins = sum(wins) if wins else 0
+    total_losses = abs(sum(losses)) if losses else 0
+    profit_factor = total_wins / total_losses if total_losses > 0 else 0
+    
+    # Calculate max drawdown
+    cumulative_pnl = []
+    running_total = 0
+    for t in sorted(trades, key=lambda x: x["created_at"]):
+        running_total += float(t.get("pnl", 0))
+        cumulative_pnl.append(running_total)
+    
+    peak = cumulative_pnl[0] if cumulative_pnl else 0
+    max_dd = 0
+    for val in cumulative_pnl:
+        if val > peak:
+            peak = val
+        dd = peak - val
+        if dd > max_dd:
+            max_dd = dd
+    
+    # Sharpe ratio (simplified)
+    sharpe = 0
+    if len(trades) > 1:
+        returns = [float(t.get("pnl", 0)) for t in trades]
+        avg_return = sum(returns) / len(returns)
+        std_return = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
+        sharpe = avg_return / std_return if std_return > 0 else 0
+    
+    # Daily P&L breakdown
+    daily_pnl_map = {}
+    for t in trades:
+        date_key = t["created_at"].strftime("%Y-%m-%d")
+        daily_pnl_map[date_key] = daily_pnl_map.get(date_key, 0) + float(t.get("pnl", 0))
+    
+    daily_pnl = [{"date": k, "pnl": round(v, 2)} for k, v in sorted(daily_pnl_map.items())]
+    
+    # Best and worst days
+    best_day = max(daily_pnl, key=lambda x: x["pnl"]) if daily_pnl else {"date": "", "pnl": 0}
+    worst_day = min(daily_pnl, key=lambda x: x["pnl"]) if daily_pnl else {"date": "", "pnl": 0}
+    
+    return {
+        "total_trades": len(trades),
+        "winning_trades": len(wins),
+        "losing_trades": len(losses),
+        "win_rate": round(win_rate, 2),
+        "total_pnl": round(total_pnl, 2),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "max_win": round(max_win, 2),
+        "max_loss": round(max_loss, 2),
+        "profit_factor": round(profit_factor, 2),
+        "sharpe_ratio": round(sharpe, 2),
+        "max_drawdown": round(max_dd, 2),
+        "best_day": best_day,
+        "worst_day": worst_day,
+        "daily_pnl": daily_pnl,
+        "period_days": days,
+    }
 
 
 @router.post("/trading/execute/{strategy_id}")
@@ -615,20 +758,29 @@ async def stock_specific_news(
 
 @router.get("/account/funds")
 async def account_funds(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Get account funds from Upstox or calculate from portfolio."""
     user = await get_default_user(db)
+    user_id = _user_id(user)
+    
+    # Check if manual balance is set
+    manual_balance = await db["manual_balance"].find_one({"user_id": user_id})
+    if manual_balance:
+        return {
+            "available_margin": float(manual_balance.get("balance", 0)),
+            "used_margin": 0,
+            "total_balance": float(manual_balance.get("balance", 0)),
+            "source": "manual_entry",
+            "updated_at": manual_balance.get("updated_at"),
+            "note": "Manually entered balance. Use regular access_token for real-time data.",
+        }
+    
     upstox = UpstoxService(db)
     
     try:
-        credential = await upstox.get_credential(_user_id(user))
-    except Exception:
-        # No credentials stored
-        return {
-            "available_margin": 0,
-            "used_margin": 0,
-            "payin_amount": 0,
-            "notional_cash": 0,
-            "error": "Upstox credentials not configured"
-        }
+        credential = await upstox.get_credential(user_id)
+    except Exception as e:
+        # No credentials stored - calculate from portfolio
+        return await _calculate_portfolio_balance(db, user_id)
     
     try:
         async with __import__('httpx').AsyncClient(timeout=15) as c:
@@ -638,62 +790,105 @@ async def account_funds(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
             )
             r.raise_for_status()
             data = r.json().get("data", {})
+        
         equity = data.get("equity", {})
+        
+        # Return actual values including negative balances
         return {
-            "available_margin": equity.get("available_margin", 0),
-            "used_margin": equity.get("used_margin", 0),
-            "payin_amount": equity.get("payin_amount", 0),
-            "notional_cash": equity.get("notional_cash", 0),
+            "available_margin": float(equity.get("available_margin", 0)),
+            "used_margin": float(equity.get("used_margin", 0)),
+            "payin_amount": float(equity.get("payin_amount", 0)),
+            "notional_cash": float(equity.get("notional_cash", 0)),
+            "source": "upstox_api",
         }
     except __import__('httpx').HTTPStatusError as e:
-        # Handle specific HTTP errors
+        # Extended token doesn't support funds API - calculate from portfolio
+        if e.response.status_code == 401:
+            error_data = e.response.json()
+            error_msg = error_data.get('errors', [{}])[0].get('message', '')
+            if 'not permitted with an extended_token' in error_msg.lower():
+                return await _calculate_portfolio_balance(db, user_id)
+        
+        # Handle other errors
         if e.response.status_code == 423:
-            # Check if it's service hours error
             try:
                 error_data = e.response.json()
                 error_msg = error_data.get('errors', [{}])[0].get('message', '')
                 if 'service hours' in error_msg.lower() or 'accessible from' in error_msg.lower():
-                    return {
-                        "available_margin": 0,
-                        "used_margin": 0,
-                        "payin_amount": 0,
-                        "notional_cash": 0,
-                        "error": "Upstox Funds API available only from 5:30 AM to 12:00 AM IST"
-                    }
+                    return await _calculate_portfolio_balance(db, user_id, 
+                        error="Upstox Funds API available only from 5:30 AM to 12:00 AM IST")
             except:
                 pass
-            return {
-                "available_margin": 0,
-                "used_margin": 0,
-                "payin_amount": 0,
-                "notional_cash": 0,
-                "error": "Upstox access token expired. Please re-authenticate."
-            }
-        elif e.response.status_code == 401:
-            return {
-                "available_margin": 0,
-                "used_margin": 0,
-                "payin_amount": 0,
-                "notional_cash": 0,
-                "error": "Upstox authentication failed. Please check credentials."
-            }
-        else:
-            return {
-                "available_margin": 0,
-                "used_margin": 0,
-                "payin_amount": 0,
-                "notional_cash": 0,
-                "error": f"Upstox API error: {e.response.status_code}"
-            }
+        
+        return await _calculate_portfolio_balance(db, user_id, 
+            error=f"Upstox API error: {e.response.status_code}")
     except Exception as e:
-        # Generic error handling
-        return {
-            "available_margin": 0,
-            "used_margin": 0,
-            "payin_amount": 0,
-            "notional_cash": 0,
-            "error": "Unable to fetch account funds"
-        }
+        return await _calculate_portfolio_balance(db, user_id, 
+            error="Unable to fetch from Upstox")
+
+
+@router.post("/account/set-balance")
+async def set_manual_balance(payload: dict, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Manually set account balance (workaround for extended_token limitation)."""
+    user = await get_default_user(db)
+    balance = float(payload.get("balance", 0))
+    
+    await db["manual_balance"].update_one(
+        {"user_id": _user_id(user)},
+        {"$set": {
+            "user_id": _user_id(user),
+            "balance": balance,
+            "updated_at": datetime.utcnow(),
+        }},
+        upsert=True,
+    )
+    
+    return {
+        "success": True,
+        "balance": balance,
+        "message": "Manual balance set successfully",
+        "note": "This is a workaround. For real-time balance, use regular access_token (not extended_token).",
+    }
+
+
+async def _calculate_portfolio_balance(db: AsyncIOMotorDatabase, user_id: str, error: str = None) -> dict:
+    """Calculate balance from trades and positions in database."""
+    # Get all trades
+    trades = await db["trades"].find({"user_id": user_id}).to_list(length=10000)
+    
+    # Calculate realized P&L from closed trades
+    realized_pnl = sum(float(t.get("pnl", 0)) for t in trades if t.get("pnl") is not None)
+    
+    # Get open positions
+    positions = await db["positions"].find({"user_id": user_id, "quantity": {"$ne": 0}}).to_list(length=1000)
+    
+    # Calculate unrealized P&L (would need current prices for accurate calculation)
+    # For now, just show the capital tied up in positions
+    capital_in_positions = 0
+    for pos in positions:
+        qty = int(pos.get("quantity", 0))
+        avg_price = float(pos.get("average_price", 0))
+        capital_in_positions += abs(qty) * avg_price
+    
+    # Estimate available balance
+    # Assuming starting capital (can be configured)
+    starting_capital = 50000  # Default, should be configurable
+    available_balance = starting_capital + realized_pnl - capital_in_positions
+    
+    result = {
+        "available_margin": round(available_balance, 2),
+        "used_margin": round(capital_in_positions, 2),
+        "realized_pnl": round(realized_pnl, 2),
+        "unrealized_pnl": 0,  # Would need current prices
+        "total_balance": round(starting_capital + realized_pnl, 2),
+        "source": "portfolio_calculation",
+        "note": "Calculated from trade history. For real-time balance, use regular access_token (not extended_token).",
+    }
+    
+    if error:
+        result["upstox_error"] = error
+    
+    return result
 
 
 @router.get("/portfolio/summary")
