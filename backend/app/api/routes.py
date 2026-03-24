@@ -71,16 +71,70 @@ async def bootstrap_admin(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
 @router.post("/auth/upstox/exchange")
 async def exchange_upstox(payload: UpstoxExchangeRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
-    return await UpstoxService(db).exchange_code(_user_id(user), payload.code)
+    result = await UpstoxService(db).exchange_code(_user_id(user), payload.code)
+    return {"success": True, "message": "Upstox connected successfully", "data": result}
+
+
+@router.post("/auth/upstox/refresh")
+async def refresh_upstox_token(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Check Upstox token status. Note: Upstox tokens cannot be auto-refreshed."""
+    user = await get_default_user(db)
+    upstox = UpstoxService(db)
+    status = await upstox.get_token_status(_user_id(user))
+    
+    if not status["configured"]:
+        raise HTTPException(status_code=404, detail="No Upstox credentials found. Please authenticate first.")
+    
+    if status["expired"]:
+        raise HTTPException(
+            status_code=401,
+            detail="Upstox access token expired. Please re-authenticate via /auth/upstox/exchange. "
+                   "Note: Upstox extended_token cannot be used for automatic refresh."
+        )
+    
+    return {
+        "success": True,
+        "message": status["message"],
+        "status": status,
+        "note": "Upstox tokens expire after ~24 hours and require manual re-authentication."
+    }
 
 
 @router.get("/settings/upstox/status")
 async def upstox_status(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     from app.core.config import get_settings
     user = await get_default_user(db)
-    credential = await db["upstox_credentials"].find_one({"user_id": _user_id(user)})
-    connected = credential is not None or bool(get_settings().upstox_access_token)
-    return {"connected": connected, "updated_at": credential.get("updated_at") if credential else None}
+    upstox = UpstoxService(db)
+    
+    # Check if using env variable token
+    if get_settings().upstox_access_token:
+        return {
+            "connected": True,
+            "source": "environment_variable",
+            "message": "Using UPSTOX_ACCESS_TOKEN from environment"
+        }
+    
+    # Get token status from database
+    status = await upstox.get_token_status(_user_id(user))
+    return {
+        "connected": status["configured"],
+        "source": "database",
+        **status
+    }
+
+
+@router.get("/settings/upstox/auth-url")
+async def upstox_auth_url() -> dict:
+    """Get Upstox authorization URL for re-authentication."""
+    from app.core.config import get_settings
+    settings = get_settings()
+    auth_url = (
+        f"{settings.upstox_auth_url}"
+        f"?client_id={settings.upstox_client_id}"
+        f"&redirect_uri={settings.upstox_redirect_uri}"
+        f"&response_type=code"
+    )
+    return {"auth_url": auth_url}
 
 
 @router.post("/market/quotes")

@@ -34,8 +34,10 @@ class UpstoxService:
             response.raise_for_status()
             data = response.json()
 
-        expires_in = data.get("expires_in")
-        expires_at = None if expires_in is None else datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=int(expires_in))
+        # Calculate expiry time - Upstox access_token typically expires in 24 hours
+        expires_in = data.get("expires_in", 86400)  # Default to 24 hours if not provided
+        expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=int(expires_in))
+        
         await self.col.update_one(
             {"user_id": user_id},
             {"$set": {
@@ -52,44 +54,60 @@ class UpstoxService:
         return data
 
     async def refresh_access_token(self, user_id: str) -> str:
-        """Use extended_token to get a fresh access_token without browser login."""
+        """Extended tokens are long-lived and don't need refresh. This method is kept for compatibility.
+        
+        Note: Upstox extended_token is valid for ~1 year and should be used directly.
+        If expired, user must re-authenticate via browser flow.
+        """
         doc = await self.col.find_one({"user_id": user_id})
-        if not doc or not doc.get("extended_token"):
-            raise ValueError("No extended_token stored. Please login once via /auth/upstox/exchange.")
-        extended_token = doc["extended_token"]
-        payload = {
-            "token": extended_token,
-            "client_id": self.settings.upstox_client_id,
-            "client_secret": self.settings.upstox_client_secret,
+        if not doc:
+            raise ValueError("No credentials stored. Please login via /auth/upstox/exchange.")
+        
+        extended_token = doc.get("extended_token")
+        if extended_token:
+            # Extended token is already long-lived, just return it
+            return extended_token
+        
+        # No extended token available, user needs to re-authenticate
+        raise ValueError("No extended_token available. Please re-authenticate via /auth/upstox/exchange.")
+
+    async def get_token_status(self, user_id: str) -> dict[str, Any]:
+        """Get the status of stored Upstox tokens."""
+        doc = await self.col.find_one({"user_id": user_id})
+        if not doc:
+            return {"configured": False, "message": "No Upstox credentials found"}
+        
+        expires_at = doc.get("expires_at")
+        has_extended = bool(doc.get("extended_token"))
+        
+        if not expires_at:
+            return {
+                "configured": True,
+                "expired": False,
+                "has_extended_token": has_extended,
+                "message": "Token configured (no expiry info)",
+                "updated_at": doc.get("updated_at"),
+            }
+        
+        if isinstance(expires_at, datetime):
+            exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+        else:
+            exp = datetime.now(timezone.utc)
+        
+        now = datetime.now(timezone.utc)
+        is_expired = now >= exp
+        time_remaining = (exp - now).total_seconds() if not is_expired else 0
+        
+        return {
+            "configured": True,
+            "expired": is_expired,
+            "expires_at": exp.isoformat(),
+            "time_remaining_seconds": int(time_remaining),
+            "time_remaining_hours": round(time_remaining / 3600, 2),
+            "has_extended_token": has_extended,
+            "message": "Token expired - re-authentication required" if is_expired else "Token active",
+            "updated_at": doc.get("updated_at"),
         }
-        headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                "https://api-v2.upstox.com/login/authorization/token",
-                data=payload,
-                headers={**headers, "Authorization": f"Bearer {extended_token}"},
-            )
-            if response.status_code != 200:
-                # fallback: try grant_type=refresh_token
-                payload2 = {
-                    "grant_type": "refresh_token",
-                    "refresh_token": extended_token,
-                    "client_id": self.settings.upstox_client_id,
-                    "client_secret": self.settings.upstox_client_secret,
-                }
-                response = await client.post(self.settings.upstox_token_url, data=payload2, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-        new_token = data.get("access_token")
-        if not new_token:
-            raise ValueError(f"Refresh failed: {data}")
-        expires_in = data.get("expires_in")
-        expires_at = None if not expires_in else datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=int(expires_in))
-        await self.col.update_one(
-            {"user_id": user_id},
-            {"$set": {"access_token": new_token, "expires_at": expires_at, "updated_at": datetime.utcnow()}},
-        )
-        return new_token
 
     async def get_credential(self, user_id: str) -> UpstoxCredential:
         doc = await self.col.find_one({"user_id": user_id})
@@ -97,19 +115,22 @@ class UpstoxService:
             return UpstoxCredential(user_id=user_id, access_token=self.settings.upstox_access_token)
         if doc is None:
             raise ValueError("Upstox credentials not configured")
-        # Auto-refresh if expired or expiring within 10 minutes
+        
+        # Check if access_token is expired
         expires_at = doc.get("expires_at")
-        if expires_at and doc.get("extended_token"):
+        if expires_at:
             if isinstance(expires_at, datetime):
                 exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
             else:
-                exp = datetime.now(timezone.utc)  # treat as expired
+                exp = datetime.now(timezone.utc)
+            
+            # If token expired or expiring within 10 minutes, raise error
             if datetime.now(timezone.utc) >= exp - timedelta(minutes=10):
-                try:
-                    access_token = await self.refresh_access_token(user_id)
-                    doc["access_token"] = access_token
-                except Exception:
-                    pass  # use existing token if refresh fails
+                raise ValueError(
+                    "Upstox access token expired. Please re-authenticate via /auth/upstox/exchange. "
+                    "Note: Upstox extended_token cannot be used for automatic refresh - manual re-authentication required."
+                )
+        
         return UpstoxCredential(
             user_id=doc["user_id"],
             access_token=doc["access_token"],
