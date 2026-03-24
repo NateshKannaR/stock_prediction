@@ -609,6 +609,174 @@ async def auto_trading_performance(days: int = 30, db: AsyncIOMotorDatabase = De
     }
 
 
+@router.get("/trading/decisions/history")
+async def get_decision_history(limit: int = 100, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Get detailed decision history for educational demonstration."""
+    user = await get_default_user(db)
+    
+    decisions = await db["trading_decisions"].find(
+        {"user_id": _user_id(user)}
+    ).sort("created_at", -1).limit(limit).to_list(length=limit)
+    
+    return {
+        "decisions": [
+            {
+                "id": str(d["_id"]),
+                "timestamp": d["timestamp"].isoformat(),
+                "type": d["decision_type"],
+                "stock": d.get("stock"),
+                "details": d.get("details", {}),
+            }
+            for d in decisions
+        ],
+        "total": len(decisions)
+    }
+
+
+@router.get("/trading/dashboard/overview")
+async def trading_dashboard_overview(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Get comprehensive dashboard data for professional UI."""
+    user = await get_default_user(db)
+    user_id = _user_id(user)
+    
+    # Get auto trading state
+    state = await db["auto_trading_state"].find_one({"user_id": user_id})
+    from app.services.auto_trader import get_status
+    loop_status = get_status()
+    
+    # Get today's trades
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_trades = await db["trades"].find({
+        "user_id": user_id,
+        "created_at": {"$gte": today}
+    }).to_list(length=10000)
+    
+    today_pnl = sum(float(t.get("pnl", 0)) for t in today_trades if t.get("pnl") is not None)
+    today_wins = len([t for t in today_trades if t.get("pnl") and float(t["pnl"]) > 0])
+    today_losses = len([t for t in today_trades if t.get("pnl") and float(t["pnl"]) < 0])
+    
+    # Get active positions
+    positions = await db["positions"].find({
+        "user_id": user_id,
+        "quantity": {"$ne": 0}
+    }).to_list(length=100)
+    
+    # Calculate capital allocation
+    capital = float(state.get("max_capital_allocation", 50000)) if state else 50000
+    capital_in_positions = sum(
+        abs(int(p.get("quantity", 0))) * float(p.get("average_price", 0))
+        for p in positions
+    )
+    available_capital = capital - capital_in_positions
+    
+    # Get performance metrics
+    all_trades = await db["trades"].find({
+        "user_id": user_id,
+        "pnl": {"$ne": None}
+    }).to_list(length=10000)
+    
+    wins = [float(t["pnl"]) for t in all_trades if float(t.get("pnl", 0)) > 0]
+    losses = [float(t["pnl"]) for t in all_trades if float(t.get("pnl", 0)) < 0]
+    
+    total_wins_amt = sum(wins) if wins else 0
+    total_losses_amt = abs(sum(losses)) if losses else 0
+    
+    # Format active positions
+    active_positions_formatted = []
+    for pos in positions:
+        qty = int(pos.get("quantity", 0))
+        if qty == 0:
+            continue
+        
+        entry_price = float(pos.get("average_price", 0))
+        current_price = float(pos.get("last_price", entry_price))
+        pnl = (current_price - entry_price) * abs(qty) * (1 if qty > 0 else -1)
+        pnl_pct = ((current_price - entry_price) / entry_price * 100) * (1 if qty > 0 else -1) if entry_price > 0 else 0
+        
+        # Calculate stop loss and target
+        stop_loss_pct = float(state.get("stop_loss_pct", 0.75)) if state else 0.75
+        profit_target_pct = float(state.get("profit_target_pct", 1.5)) if state else 1.5
+        
+        if qty > 0:  # Long position
+            stop_loss = entry_price * (1 - stop_loss_pct / 100)
+            target = entry_price * (1 + profit_target_pct / 100)
+        else:  # Short position
+            stop_loss = entry_price * (1 + stop_loss_pct / 100)
+            target = entry_price * (1 - profit_target_pct / 100)
+        
+        active_positions_formatted.append({
+            "stock": pos.get("instrument_key", "").split("|")[-1],
+            "instrument_key": pos.get("instrument_key"),
+            "side": "BUY" if qty > 0 else "SELL",
+            "quantity": abs(qty),
+            "entry_price": round(entry_price, 2),
+            "current_price": round(current_price, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "stop_loss": round(stop_loss, 2),
+            "target": round(target, 2),
+            "entry_time": pos.get("updated_at", datetime.utcnow()).isoformat(),
+        })
+    
+    return {
+        "status": {
+            "enabled": state.get("enabled", False) if state else False,
+            "running": loop_status.get("running", False),
+            "paper_trading": state.get("paper_trading", True) if state else True,
+            "last_cycle": loop_status.get("last_cycle"),
+            "cycles_completed": loop_status.get("cycles", 0),
+        },
+        "capital": {
+            "total_allocated": round(capital, 2),
+            "available": round(available_capital, 2),
+            "in_positions": round(capital_in_positions, 2),
+            "utilization_pct": round((capital_in_positions / capital * 100) if capital > 0 else 0, 2),
+        },
+        "today": {
+            "trades": len(today_trades),
+            "pnl": round(today_pnl, 2),
+            "pnl_pct": round((today_pnl / capital * 100) if capital > 0 else 0, 2),
+            "wins": today_wins,
+            "losses": today_losses,
+            "win_rate": round((today_wins / len(today_trades) * 100) if today_trades else 0, 2),
+        },
+        "active_positions": active_positions_formatted,
+        "performance": {
+            "total_trades": len(all_trades),
+            "win_rate": round((len(wins) / len(all_trades) * 100) if all_trades else 0, 2),
+            "profit_factor": round(total_wins_amt / total_losses_amt if total_losses_amt > 0 else 0, 2),
+            "avg_win": round(sum(wins) / len(wins) if wins else 0, 2),
+            "avg_loss": round(sum(losses) / len(losses) if losses else 0, 2),
+            "total_pnl": round(sum(float(t.get("pnl", 0)) for t in all_trades), 2),
+        },
+        "risk_metrics": {
+            "daily_loss_limit": float(state.get("daily_loss_limit", 2000)) if state else 2000,
+            "daily_loss_used": abs(today_pnl) if today_pnl < 0 else 0,
+            "daily_loss_remaining": float(state.get("daily_loss_limit", 2000)) - abs(today_pnl) if state and today_pnl < 0 else float(state.get("daily_loss_limit", 2000)) if state else 2000,
+            "max_positions": int(state.get("max_positions", 3)) if state else 3,
+            "current_positions": len(active_positions_formatted),
+            "max_trades_per_day": int(state.get("max_trades_per_day", 10)) if state else 10,
+            "trades_today": len(today_trades),
+            "trades_remaining": max(0, int(state.get("max_trades_per_day", 10)) - len(today_trades)) if state else 10 - len(today_trades),
+        },
+        "logs": loop_status.get("log", [])[:20],
+    }
+
+
+@router.get("/trading/analysis/current")
+async def get_current_analysis(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    """Get current stock analysis results for UI display."""
+    from app.services.auto_trader_professional import get_professional_status
+    
+    status = get_professional_status()
+    
+    return {
+        "scan_results": status.get("current_scan_results", []),
+        "last_updated": status.get("last_cycle"),
+        "performance_metrics": status.get("performance_metrics", {}),
+    }
+
+
 @router.post("/trading/execute/{strategy_id}")
 async def execute_strategy(strategy_id: str, db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     user = await get_default_user(db)
